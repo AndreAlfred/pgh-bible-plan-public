@@ -45,8 +45,7 @@ let audio = {
   gen: 0,
   playing: false,
   paused: false,
-  hidden: false,
-  collapsed: false,
+  open: false,
   title: "Ready",
   subtitle: "Choose Play all 10 or a chapter.",
   mode: "idle"
@@ -273,7 +272,7 @@ async function speakAll() {
 }
 function setAudioQueue(items, title, subtitle, mode) {
   stopAudio(false);
-  audio = { ...audio, items, index: 0, playing: true, paused: false, hidden: false, title, subtitle, mode };
+  audio = { ...audio, items, index: 0, playing: true, paused: false, open: true, title, subtitle, mode };
   speakCurrent();
   renderAudioPlayer();
 }
@@ -360,12 +359,8 @@ function stopAudio(update = true) {
   cancelSpeech();
   if (update) renderAudioPlayer();
 }
-function toggleAudioHidden() {
-  audio.hidden = !audio.hidden;
-  renderAudioPlayer();
-}
-function toggleAudioCollapsed() {
-  audio.collapsed = !audio.collapsed;
+function toggleAudioOpen() {
+  audio.open = !audio.open;
   renderAudioPlayer();
 }
 function renderVoiceSelectOnly() {
@@ -380,21 +375,23 @@ function renderAudioPlayer() {
   if (el) el.outerHTML = audioPlayerHtml();
 }
 function audioPlayerHtml() {
+  if (!audio.open) {
+    return `<section id="audioDock" class="audio-dock is-closed" aria-label="Audio player">
+      <button class="audio-tab" onclick="toggleAudioOpen()">Audio Player</button>
+    </section>`;
+  }
   const current = audio.items[audio.index];
   const max = Math.max(0, audio.items.length - 1);
-  const visibleClass = audio.hidden ? "is-hidden" : "";
-  const collapsedClass = audio.collapsed ? "is-collapsed" : "";
-  return `<section id="audioDock" class="audio-dock ${visibleClass} ${collapsedClass}" aria-label="Floating audio player">
-    <button class="audio-tab" onclick="toggleAudioHidden()">${audio.hidden ? "Show audio" : "Hide audio"}</button>
+  return `<section id="audioDock" class="audio-dock" aria-label="Audio player">
+    <button class="audio-tab" onclick="toggleAudioOpen()">Hide</button>
     <div class="audio-shell">
       <div class="audio-topline">
         <div><p class="eyebrow">Browser audio</p><h3>${esc(audio.title)}</h3><span>${esc(current?.label || audio.subtitle || "Ready")}</span></div>
-        <button onclick="toggleAudioCollapsed()">${audio.collapsed ? "Expand" : "Minimize"}</button>
       </div>
       <div class="audio-body">
         <input class="scrubber" type="range" min="0" max="${max}" value="${audio.index}" ${audio.items.length ? "" : "disabled"} oninput="seekAudio(this.value)" style="--played:${audioProgress()}%">
         <div class="audio-meta"><span>${audio.items.length ? `${audio.index + 1} / ${audio.items.length}` : "No audio queued"}</span><span>${audio.paused ? "Paused" : audio.playing ? "Playing" : "Stopped"}</span></div>
-        <div class="audio-controls"><button onclick="stepAudio(-10)">-10</button><button onclick="stepAudio(-1)">Back</button><button onclick="${audio.paused ? "resumeAudio()" : "pauseAudio()"}">${audio.paused ? "Resume" : "Pause"}</button><button onclick="stepAudio(1)">Next</button><button onclick="stepAudio(10)">+10</button><button onclick="stopAudio()">Stop</button></div>
+        <div class="audio-controls"><button onclick="stepAudio(-10)">-10</button><button onclick="stepAudio(-1)">Back</button><button onclick="stepAudio(1)">Next</button><button onclick="stepAudio(10)">+10</button><button onclick="stopAudio()">Stop</button></div>
       </div>
     </div>
   </section>`;
