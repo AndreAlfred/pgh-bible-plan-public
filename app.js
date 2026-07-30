@@ -297,13 +297,32 @@ function buildChapterItems(chapter, label, { announce = false, chapterIndex = 0 
   }
   return items;
 }
+// iOS Safari only honours speechSynthesis.speak() when it is called synchronously
+// inside the tap handler. Both entry points below await chapter loads before they
+// reach speakCurrent(), and after that await WebKit silently drops the utterance --
+// no error, no events, just silence. Speaking one near-silent utterance during the
+// gesture unlocks synthesis for the rest of the page session.
+let speechPrimed = false;
+function primeSpeech() {
+  if (speechPrimed || !("speechSynthesis" in window)) return;
+  try {
+    const u = new SpeechSynthesisUtterance(" ");
+    u.volume = 0;
+    speechSynthesis.speak(u);
+    speechPrimed = true;
+  } catch {
+    /* older engines may reject an empty utterance; the real speak() still follows */
+  }
+}
 async function speakChapter(i) {
+  primeSpeech();
   const r = currentReadings()[i];
   const ch = await getChapter(r.current);
   const label = refText(r.current);
   setAudioQueue(buildChapterItems(ch, label, { announce: false, chapterIndex: 0 }), label, r.list.name, "chapter");
 }
 async function speakAll() {
+  primeSpeech();
   const items = [];
   const readings = currentReadings();
   for (let i = 0; i < readings.length; i++) {
@@ -322,11 +341,13 @@ function setAudioQueue(items, title, subtitle, mode) {
 let currentUtterance = null;
 function cancelSpeech() {
   audio.gen += 1;
-  if (currentUtterance) {
-    currentUtterance.onend = null;
-    currentUtterance.onerror = null;
-    currentUtterance = null;
-  }
+  // Only cancel when an utterance of ours is actually in flight. Cancelling when
+  // nothing of ours is queued kills the priming utterance mid-flight, which wedges
+  // the engine: speechSynthesis.speaking stays true and the next speak() never runs.
+  if (!currentUtterance) return;
+  currentUtterance.onend = null;
+  currentUtterance.onerror = null;
+  currentUtterance = null;
   speechSynthesis?.cancel?.();
 }
 function speakCurrent() {
