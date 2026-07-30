@@ -6,3 +6,5 @@
 
 .audio-dock.is-closed{transform:translate(-50%,0);width:auto;background:transparent;border:0;box-shadow:none;padding:0}
 .audio-dock.is-closed .audio-tab{position:static;right:auto;top:auto}
+
+.audio-controls .audio-primary{background:var(--gold);color:var(--ink);font-weight:600;min-width:96px}

@@ -374,6 +374,16 @@ function renderAudioPlayer() {
   const el = document.getElementById("audioDock");
   if (el) el.outerHTML = audioPlayerHtml();
 }
+function primaryLabel() {
+  if (audio.playing && !audio.paused) return "Pause";
+  if (audio.items.length) return "Play";
+  return "Play all 10";
+}
+function primaryAction() {
+  if (audio.playing && !audio.paused) return pauseAudio();
+  if (audio.items.length) return resumeAudio();
+  return speakAll();
+}
 function audioPlayerHtml() {
   if (!audio.open) {
     return `<section id="audioDock" class="audio-dock is-closed" aria-label="Audio player">
@@ -391,7 +401,7 @@ function audioPlayerHtml() {
       <div class="audio-body">
         <input class="scrubber" type="range" min="0" max="${max}" value="${audio.index}" ${audio.items.length ? "" : "disabled"} oninput="seekAudio(this.value)" style="--played:${audioProgress()}%">
         <div class="audio-meta"><span>${audio.items.length ? `${audio.index + 1} / ${audio.items.length}` : "No audio queued"}</span><span>${audio.paused ? "Paused" : audio.playing ? "Playing" : "Stopped"}</span></div>
-        <div class="audio-controls"><button onclick="stepAudio(-10)">-10</button><button onclick="stepAudio(-1)">Back</button><button onclick="stepAudio(1)">Next</button><button onclick="stepAudio(10)">+10</button><button onclick="stopAudio()">Stop</button></div>
+        <div class="audio-controls"><button onclick="stepAudio(-10)">-10</button><button onclick="stepAudio(-1)">Back</button><button class="audio-primary" onclick="primaryAction()">${primaryLabel()}</button><button onclick="stepAudio(1)">Next</button><button onclick="stepAudio(10)">+10</button><button onclick="stopAudio()">Stop</button></div>
       </div>
     </div>
   </section>`;
