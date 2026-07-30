@@ -245,22 +245,29 @@ function selectedVoice() {
   return voices.find(v => v.name === name) || voices.find(v => /english|us|uk/i.test(v.lang)) || voices[0];
 }
 function rate() { return Number(document.getElementById("rateRange")?.value || 1); }
-function buildChapterItems(chapter, label) {
-  return [
-    { label, text: `${label}.` },
-    ...chapter.verses.map(v => ({ label: `${label}:${v.v}`, text: `Verse ${v.v}. ${v.t}` }))
-  ];
+function buildChapterItems(chapter, label, { announce = false, chapterIndex = 0 } = {}) {
+  const items = [];
+  if (announce) {
+    items.push({ kind: "chapter", label, text: `${label}.`, ref: label, chapterIndex });
+  }
+  for (const v of chapter.verses) {
+    items.push({ kind: "verse", v: v.v, label: `${label}:${v.v}`, text: v.t, ref: label, chapterIndex });
+  }
+  return items;
 }
 async function speakChapter(i) {
   const r = currentReadings()[i];
   const ch = await getChapter(r.current);
-  setAudioQueue(buildChapterItems(ch, refText(r.current)), refText(r.current), r.list.name, "chapter");
+  const label = refText(r.current);
+  setAudioQueue(buildChapterItems(ch, label, { announce: false, chapterIndex: 0 }), label, r.list.name, "chapter");
 }
 async function speakAll() {
   const items = [];
-  for (const r of currentReadings()) {
+  const readings = currentReadings();
+  for (let i = 0; i < readings.length; i++) {
+    const r = readings[i];
     const ch = await getChapter(r.current);
-    items.push(...buildChapterItems(ch, refText(r.current)));
+    items.push(...buildChapterItems(ch, refText(r.current), { announce: true, chapterIndex: i }));
   }
   setAudioQueue(items, `Day ${state.day}: all ten chapters`, `${items.length} passage segments`, "all");
 }
