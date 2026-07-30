@@ -47,7 +47,7 @@ let audio = {
   paused: false,
   open: false,
   title: "Ready",
-  subtitle: "Choose Play all 10 or a chapter.",
+  subtitle: "Tap Listen, or pick a single chapter.",
   mode: "idle"
 };
 
@@ -142,6 +142,9 @@ function copyReadings() {
 }
 function scrollToChapter(i) {
   document.getElementById(`chapter-panel-${i}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function scrollToReader() {
+  document.getElementById("reader")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function db() {
@@ -416,7 +419,7 @@ function renderAudioPlayer() {
 function primaryLabel() {
   if (audio.playing && !audio.paused) return "Pause";
   if (audio.items.length) return "Play";
-  return "Play all 10";
+  return "Listen to all ten";
 }
 function primaryAction() {
   if (audio.playing && !audio.paused) return pauseAudio();
@@ -468,12 +471,12 @@ function render() {
   const readings = currentReadings();
   const imported = state.importedNames || [];
   $("#app").innerHTML = `
-    <section class="hero"><div class="seal">PGH</div><div><p class="eyebrow">Unofficial reading-plan tool</p><h1>Professor Grant Horner Bible Reading Plan</h1><p class="sub">Ten rotating chapter lists, local progress, KJV text, optional bring-your-own Bible import, and browser read-aloud.</p></div><div class="dayplate" onclick="setDay()"><span>Current day</span><strong>${state.day}</strong><em>tap to edit</em></div></section>
+    <section class="hero"><div class="seal">PGH</div><div><p class="eyebrow">Unofficial reading-plan tool</p><h1>Professor Grant Horner Bible Reading Plan</h1><p class="sub">Ten rotating chapter lists, local progress, KJV text, optional bring-your-own Bible import, and browser read-aloud.</p></div><div class="hero-side"><div class="dayplate" onclick="setDay()"><span>Current day</span><strong>${state.day}</strong><em>tap to edit</em></div><div class="hero-buttons"><button class="hero-btn read" onclick="scrollToReader()">Read</button><button class="hero-btn listen" onclick="speakAll()">Listen</button></div></div></section>
     <section class="notice"><strong>Unofficial.</strong> Not affiliated with or endorsed by Professor Grant Horner, The Lockman Foundation, or any Bible publisher. Included text is KJV; imported Bible files stay in your browser.</section>
-    <section class="actions"><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button><button onclick="copyReadings()">Copy readings</button><button onclick="speakAll()">Play all 10</button><button onclick="exportData()">Export</button><label class="button">Import progress <input type="file" accept="application/json" onchange="importData(this.files[0])"></label><button onclick="resetPlan()">Reset</button></section>
+    <section class="actions"><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button><button onclick="copyReadings()">Copy readings</button><button onclick="exportData()">Export</button><label class="button">Import progress <input type="file" accept="application/json" onchange="importData(this.files[0])"></label><button onclick="resetPlan()">Reset</button></section>
     <section class="settings"><div><label>Translation <select onchange="state.translation=this.value; saveState()"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Voice <select id="voiceSelect">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="1"></label></div></section>
     <section class="grid">${readings.map(r => card(r.list, r.index)).join("")}</section>
-    <section class="reader"><div class="reader-head"><p class="eyebrow">${esc(currentTranslation)} chapter text</p><h2>Today’s ten chapters</h2></div>${readings.map(chapterPanel).join("")}</section>
+    <section class="reader" id="reader"><div class="reader-head"><p class="eyebrow">${esc(currentTranslation)} chapter text</p><h2>Today’s ten chapters</h2></div>${readings.map(chapterPanel).join("")}</section>
     <section class="history"><h2>Recent completed days</h2>${state.history.length ? state.history.slice(0, 12).map(h => `<details><summary>Day ${h.day} · ${new Date(h.date).toLocaleDateString()}</summary><ol>${h.readings.map(r => `<li>${esc(r.ref)}</li>`).join("")}</ol></details>`).join("") : `<p>No completed days logged yet.</p>`}</section>
     ${audioPlayerHtml()}`;
   loadChapters(readings);
