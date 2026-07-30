@@ -384,6 +384,23 @@ function primaryAction() {
   if (audio.items.length) return resumeAudio();
   return speakAll();
 }
+function chapterMarkers() {
+  const marks = [];
+  let last = null;
+  audio.items.forEach((item, i) => {
+    if (item.chapterIndex !== last) {
+      marks.push({ index: i, ref: item.ref });
+      last = item.chapterIndex;
+    }
+  });
+  return marks.length > 1 ? marks : [];
+}
+function markersHtml() {
+  const max = Math.max(1, audio.items.length - 1);
+  return chapterMarkers().map(m =>
+    `<button class="audio-mark" style="left:${(m.index / max) * 100}%" title="${esc(m.ref)}" aria-label="Jump to ${esc(m.ref)}" onclick="seekAudio(${m.index})"></button>`
+  ).join("");
+}
 function audioPlayerHtml() {
   if (!audio.open) {
     return `<section id="audioDock" class="audio-dock is-closed" aria-label="Audio player">
@@ -399,7 +416,7 @@ function audioPlayerHtml() {
         <div><p class="eyebrow">Browser audio</p><h3>${esc(audio.title)}</h3><span>${esc(current?.label || audio.subtitle || "Ready")}</span></div>
       </div>
       <div class="audio-body">
-        <input class="scrubber" type="range" min="0" max="${max}" value="${audio.index}" ${audio.items.length ? "" : "disabled"} oninput="seekAudio(this.value)" style="--played:${audioProgress()}%">
+        <div class="scrubber-wrap"><input class="scrubber" type="range" min="0" max="${max}" value="${audio.index}" ${audio.items.length ? "" : "disabled"} oninput="seekAudio(this.value)" style="--played:${audioProgress()}%"><div class="audio-marks">${markersHtml()}</div></div>
         <div class="audio-meta"><span>${audio.items.length ? `${audio.index + 1} / ${audio.items.length}` : "No audio queued"}</span><span>${audio.paused ? "Paused" : audio.playing ? "Playing" : "Stopped"}</span></div>
         <div class="audio-controls"><button onclick="stepAudio(-10)">-10</button><button onclick="stepAudio(-1)">Back</button><button class="audio-primary" onclick="primaryAction()">${primaryLabel()}</button><button onclick="stepAudio(1)">Next</button><button onclick="stepAudio(10)">+10</button><button onclick="stopAudio()">Stop</button></div>
       </div>
