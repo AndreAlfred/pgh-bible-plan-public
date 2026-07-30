@@ -204,6 +204,46 @@ function normalizeImportedChapter(raw) {
   if (raw.book && raw.chapter && raw.verses) return { ...raw, ref: `${raw.book} ${raw.chapter}` };
   return null;
 }
+let importHelpOpen = false;
+function toggleImportHelp() {
+  importHelpOpen = !importHelpOpen;
+  render();
+}
+function importHelpHtml() {
+  if (!importHelpOpen) return "";
+  const example = `{
+  "translation": "NASB",
+  "chapters": {
+    "Genesis 1": [
+      { "v": 1, "t": "In the beginning God created the heavens and the earth." },
+      { "v": 2, "t": "The earth was formless and void." }
+    ],
+    "Psalms 23": [
+      { "v": 1, "t": "The Lord is my shepherd, I shall not want." }
+    ]
+  }
+}`;
+  return `<div class="import-help" id="importHelp">
+    <div class="import-help-head"><h3>Bible JSON format</h3><button onclick="toggleImportHelp()" aria-label="Close format help">Close</button></div>
+    <p>Your file never leaves this browser. It is stored locally and used in place of the KJV text once you select it in the Translation dropdown.</p>
+    <h4>The shape</h4>
+    <p><code>translation</code> is the name shown in the dropdown. If you leave it out, the file name is used instead. <code>chapters</code> maps a reference to its list of verses:</p>
+    <pre>${esc(example)}</pre>
+    <h4>Two rules that matter</h4>
+    <ol>
+      <li><strong>Reference keys must be <code>Book Chapter</code></strong>, spelled exactly as this app spells them — <code>Genesis 1</code>, <code>Psalms 23</code> (not "Psalm"), <code>Song of Solomon 2</code>, <code>1 Kings 5</code>, <code>Revelation 22</code>. A reference the app doesn't recognise is skipped silently.</li>
+      <li><strong>Include the verse numbers</strong> as <code>v</code>. You may instead pass a plain list of strings (<code>["first verse", "second verse"]</code>) and they'll be numbered from 1 — but that mislabels every verse after any gap, so <code>{ "v", "t" }</code> is safer.</li>
+    </ol>
+    <h4>Also accepted</h4>
+    <p>An array instead of an object, where each entry carries its own reference:</p>
+    <pre>${esc(`{ "translation": "NASB", "chapters": [
+  { "ref": "Genesis 1", "verses": [ { "v": 1, "t": "..." } ] },
+  { "book": "Psalms", "chapter": 23, "verses": [ { "v": 1, "t": "..." } ] }
+] }`)}</pre>
+    <p>You don't need the whole Bible. Import a single chapter or one book — anything missing falls back to the KJV text.</p>
+    <p class="import-help-note">Only import text you have the right to use. Imported files stay on this device and are never uploaded.</p>
+  </div>`;
+}
 async function importBibleJson(file) {
   if (!file) return;
   const raw = JSON.parse(await file.text());
@@ -431,7 +471,7 @@ function render() {
     <section class="hero"><div class="seal">PGH</div><div><p class="eyebrow">Unofficial reading-plan tool</p><h1>Professor Grant Horner Bible Reading Plan</h1><p class="sub">Ten rotating chapter lists, local progress, KJV text, optional bring-your-own Bible import, and browser read-aloud.</p></div><div class="dayplate" onclick="setDay()"><span>Current day</span><strong>${state.day}</strong><em>tap to edit</em></div></section>
     <section class="notice"><strong>Unofficial.</strong> Not affiliated with or endorsed by Professor Grant Horner, The Lockman Foundation, or any Bible publisher. Included text is KJV; imported Bible files stay in your browser.</section>
     <section class="actions"><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button><button onclick="copyReadings()">Copy readings</button><button onclick="speakAll()">Play all 10</button><button onclick="exportData()">Export</button><label class="button">Import progress <input type="file" accept="application/json" onchange="importData(this.files[0])"></label><button onclick="resetPlan()">Reset</button></section>
-    <section class="settings"><div><label>Translation <select onchange="state.translation=this.value; saveState()"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label></div><div><label>Voice <select id="voiceSelect">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="1"></label></div></section>
+    <section class="settings"><div><label>Translation <select onchange="state.translation=this.value; saveState()"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Voice <select id="voiceSelect">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="1"></label></div></section>
     <section class="grid">${readings.map(r => card(r.list, r.index)).join("")}</section>
     <section class="reader"><div class="reader-head"><p class="eyebrow">${esc(currentTranslation)} chapter text</p><h2>Today’s ten chapters</h2></div>${readings.map(chapterPanel).join("")}</section>
     <section class="history"><h2>Recent completed days</h2>${state.history.length ? state.history.slice(0, 12).map(h => `<details><summary>Day ${h.day} · ${new Date(h.date).toLocaleDateString()}</summary><ol>${h.readings.map(r => `<li>${esc(r.ref)}</li>`).join("")}</ol></details>`).join("") : `<p>No completed days logged yet.</p>`}</section>

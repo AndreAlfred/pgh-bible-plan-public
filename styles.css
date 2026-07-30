@@ -13,3 +13,13 @@
 .audio-marks{position:absolute;left:0;right:0;top:0;height:8px;pointer-events:none}
 .audio-mark{position:absolute;top:-3px;width:14px;height:14px;margin-left:-7px;padding:0;border:0;border-radius:50%;background:rgba(255,248,234,.9);box-shadow:0 0 0 2px var(--ink);cursor:pointer;pointer-events:auto}
 .audio-mark:hover{background:var(--gold)}
+.info-btn{width:44px;height:44px;min-width:44px;padding:0;border-radius:50%;font-family:Fraunces,serif;font-style:italic;font-weight:700;font-size:1.05rem;line-height:1;display:grid;place-items:center}
+.settings>.import-help{display:block;flex:1 1 100%;margin-top:12px;padding:18px 20px;border:1px solid var(--line);border-radius:20px;background:rgba(255,248,234,.9);color:var(--ink)}
+.import-help-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.import-help h3{margin:0;font-family:Fraunces,serif}
+.import-help h4{margin:16px 0 4px;font-family:Fraunces,serif;color:var(--rust);font-size:.95rem;text-transform:uppercase;letter-spacing:.08em}
+.import-help p,.import-help li{color:var(--muted);max-width:74ch}
+.import-help code{background:rgba(180,130,57,.16);border-radius:6px;padding:1px 5px;font-size:.92em}
+.import-help pre{overflow-x:auto;padding:12px 14px;border-radius:14px;background:var(--ink);color:#f3e6c8;font-size:.86rem;line-height:1.5}
+.import-help ol{padding-left:20px}
+.import-help-note{font-style:italic;border-top:1px solid var(--line);padding-top:10px;margin-bottom:0}
