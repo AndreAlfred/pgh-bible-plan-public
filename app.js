@@ -42,6 +42,7 @@ let voices = [];
 let audio = {
   items: [],
   index: 0,
+  gen: 0,
   playing: false,
   paused: false,
   hidden: false,
@@ -269,10 +270,21 @@ function setAudioQueue(items, title, subtitle, mode) {
   speakCurrent();
   renderAudioPlayer();
 }
+let currentUtterance = null;
+function cancelSpeech() {
+  audio.gen += 1;
+  if (currentUtterance) {
+    currentUtterance.onend = null;
+    currentUtterance.onerror = null;
+    currentUtterance = null;
+  }
+  speechSynthesis?.cancel?.();
+}
 function speakCurrent() {
   if (!audio.playing || !audio.items.length || audio.index >= audio.items.length) {
     audio.playing = false;
     audio.paused = false;
+    cancelSpeech();
     renderAudioPlayer();
     return;
   }
@@ -282,28 +294,32 @@ function speakCurrent() {
     renderAudioPlayer();
     return;
   }
-  speechSynthesis.cancel();
+  cancelSpeech();
+  const myGen = audio.gen;
   const item = audio.items[audio.index];
   const u = new SpeechSynthesisUtterance(item.text);
   const v = selectedVoice();
   if (v) u.voice = v;
   u.rate = rate();
   u.onend = () => {
+    if (myGen !== audio.gen) return;
     if (!audio.playing || audio.paused) return;
     audio.index += 1;
     speakCurrent();
   };
   u.onerror = () => {
+    if (myGen !== audio.gen) return;
     if (!audio.playing) return;
     audio.index += 1;
     speakCurrent();
   };
+  currentUtterance = u;
   speechSynthesis.speak(u);
   renderAudioPlayer();
 }
 function audioProgress() {
-  if (!audio.items.length) return 0;
-  return Math.min(100, Math.round(((audio.index + (audio.playing ? 1 : 0)) / audio.items.length) * 100));
+  if (audio.items.length < 2) return 0;
+  return Math.min(100, Math.round((audio.index / (audio.items.length - 1)) * 100));
 }
 function seekAudio(index) {
   if (!audio.items.length) return;
@@ -334,7 +350,7 @@ function stopAudio(update = true) {
   audio.playing = false;
   audio.paused = false;
   audio.index = 0;
-  speechSynthesis?.cancel?.();
+  cancelSpeech();
   if (update) renderAudioPlayer();
 }
 function toggleAudioHidden() {
