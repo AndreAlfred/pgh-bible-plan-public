@@ -339,18 +339,17 @@ function stepAudio(delta) {
   seekAudio(audio.index + delta);
 }
 function pauseAudio() {
-  if (!("speechSynthesis" in window)) return;
+  if (!audio.items.length) return;
+  audio.playing = true;
   audio.paused = true;
-  speechSynthesis.pause();
+  cancelSpeech();
   renderAudioPlayer();
 }
 function resumeAudio() {
-  if (!("speechSynthesis" in window)) return;
   if (!audio.items.length) return;
   audio.playing = true;
   audio.paused = false;
-  speechSynthesis.resume();
-  renderAudioPlayer();
+  speakCurrent();
 }
 function stopAudio(update = true) {
   audio.playing = false;
