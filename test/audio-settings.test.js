@@ -69,3 +69,30 @@ test("English voices are listed before every other language", () => {
   assert.deepStrictEqual(names.slice(0, 2).sort(), ["Daniel", "Samantha"]);
   assert.strictEqual(names.length, 4);
 });
+
+// Real iOS list: Apple ships joke and 1980s MacInTalk voices tagged en-US.
+const IOS = [
+  { name: "Samantha", lang: "en-US" }, { name: "Samantha", lang: "en-US" },
+  { name: "Albert", lang: "en-US" }, { name: "Bubbles", lang: "en-US" },
+  { name: "Cellos", lang: "en-US" }, { name: "Fred", lang: "en-US" },
+  { name: "Daniel", lang: "en-GB" }
+];
+const optionNames = html => [...html.matchAll(/value="([^"]+)"/g)].map(m => m[1]);
+
+test("novelty voices are left out of the picker", () => {
+  const names = optionNames(voiceOptionsHtml(IOS, ""));
+  for (const joke of ["Albert", "Bubbles", "Cellos", "Fred"]) assert.ok(!names.includes(joke), `${joke} listed`);
+});
+
+test("a voice listed twice by the device appears once", () => {
+  assert.deepStrictEqual(optionNames(voiceOptionsHtml(IOS, "")), ["Samantha", "Daniel"]);
+});
+
+test("a novelty voice someone already chose stays selectable", () => {
+  assert.match(voiceOptionsHtml(IOS, "Bubbles"), /<option value="Bubbles" selected>/);
+});
+
+test("the default voice is never a novelty voice", () => {
+  const list = [{ name: "Albert", lang: "en-US" }, { name: "Samantha", lang: "en-US" }];
+  assert.strictEqual(pickVoice(list, "").name, "Samantha");
+});

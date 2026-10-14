@@ -495,8 +495,25 @@ if (typeof window !== "undefined" && "speechSynthesis" in window) {
 // anything read back off a control is lost the next time any button is pressed.
 // Match on the language prefix: a looser /us/ test also matched es-US (Spanish).
 const isEnglish = v => /^en([-_]|$)/i.test(v.lang || "");
+// Apple ships joke voices (Bubbles, Cellos…) and robotic 1980s MacInTalk voices
+// tagged en-US alongside the real ones. Matched by name, since their voiceURIs
+// differ between macOS and iOS. A voice someone already chose is never hidden.
+const NOVELTY_VOICES = new Set(["Albert", "Bad News", "Bahh", "Bells", "Boing", "Bubbles", "Cellos",
+  "Deranged", "Fred", "Good News", "Hysterical", "Jester", "Junior", "Kathy", "Organ", "Pipe Organ",
+  "Princess", "Ralph", "Superstar", "Trinoids", "Whisper", "Wobble", "Zarvox"]);
+// iOS can also list one voice twice (e.g. compact and enhanced Samantha). The picker
+// stores the name, so a second same-named entry could never be selected anyway.
+function usableVoices(list, savedName) {
+  const seen = new Set();
+  return list.filter(v => {
+    const key = `${v.name}|${v.lang}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return v.name === savedName || !NOVELTY_VOICES.has(v.name);
+  });
+}
 function pickVoice(list, savedName) {
-  return list.find(v => v.name === savedName) || list.find(isEnglish) || list[0];
+  return list.find(v => v.name === savedName) || usableVoices(list).find(isEnglish) || list[0];
 }
 function selectedVoice() { return pickVoice(voices, state?.voice); }
 function clampRate(v) {
@@ -681,7 +698,8 @@ function renderVoiceSelectOnly() {
 function voiceOptionsHtml(list, selectedName) {
   if (!list.length) return `<option value="">No voices found yet</option>`;
   // Apple devices ship 100+ voices; put English first rather than burying it.
-  const ordered = [...list.filter(isEnglish), ...list.filter(v => !isEnglish(v))];
+  const usable = usableVoices(list, selectedName);
+  const ordered = [...usable.filter(isEnglish), ...usable.filter(v => !isEnglish(v))];
   return ordered.map(v =>
     `<option value="${esc(v.name)}"${v.name === selectedName ? " selected" : ""}>${esc(v.name)} · ${esc(v.lang)}</option>`
   ).join("");
