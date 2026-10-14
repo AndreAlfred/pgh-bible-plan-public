@@ -120,15 +120,39 @@ function move(i, delta) {
   stopAudio();
   saveState();
 }
-function completeDay() {
-  const readings = currentReadings().map(r => ({ list: r.list.id, name: r.list.name, ref: refText(r.current) }));
-  state.history.unshift({ day: state.day, date: new Date().toISOString(), readings });
-  state.history = state.history.slice(0, 90);
-  state.positions = state.positions.map((p, i) => (p + 1) % PLAN[i].chapters.length);
-  state.day += 1;
-  state.done = {};
+// Returns a new state rather than editing this one: Undo restores the old object.
+function advanceDay(st) {
+  const readings = PLAN.map((list, i) => ({ list: list.id, name: list.name, ref: refText(list.chapters[st.positions[i]]) }));
+  return {
+    ...st,
+    day: st.day + 1,
+    positions: st.positions.map((p, i) => (p + 1) % PLAN[i].chapters.length),
+    done: {},
+    history: [{ day: st.day, date: new Date().toISOString(), readings }, ...st.history].slice(0, 90)
+  };
+}
+// Undo is offered for a few seconds after a big jump. It only applies while nothing
+// else has changed since, so it can never throw away a later Next or Done.
+let undo = null;
+function offerUndo(before, message) {
+  undo = { before, after: JSON.stringify(state) };
+  toast(message, { actionLabel: "Undo", action: undoLast, ms: 10000 });
+}
+function undoLast() {
+  if (!undo) return;
+  if (JSON.stringify(state) !== undo.after) { toast("Can't undo — your progress changed since then."); undo = null; return; }
+  state = undo.before;
+  undo = null;
   stopAudio();
   saveState();
+  toast(`Back to Day ${state.day}.`);
+}
+function completeDay() {
+  const before = state;
+  state = advanceDay(state);
+  stopAudio();
+  saveState();
+  offerUndo(before, `Day ${before.day} complete — on to Day ${state.day}.`);
 }
 function setReference(i, book, chapter) {
   state.positions[i] = indexOfRef(PLAN[i], { book, chapter: Number(chapter) });
@@ -145,9 +169,11 @@ function setDay() {
 }
 function resetPlan() {
   if (!confirm("Reset public plan progress to Day 1?")) return;
+  const before = state;
   state = { ...initialState(), importedNames: state.importedNames || [], translation: state.translation || "KJV" };
   stopAudio();
   saveState();
+  offerUndo(before, "Progress reset to Day 1.");
 }
 function exportData() {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
@@ -160,16 +186,48 @@ async function importData(file) {
   if (!file) return;
   let result;
   try { result = parseProgressFile(await file.text()); }
-  catch (err) { alert(`Could not read that file: ${err.message}`); return; }
-  if (!result.ok) { alert(result.error); return; }
+  catch (err) { toast(`Could not read that file: ${err.message}`, { error: true }); return; }
+  if (!result.ok) { toast(result.error, { error: true }); return; }
+  const before = state;
   state = result.state;
   persistState();
   stopAudio();
   render();
+  offerUndo(before, `Progress restored to Day ${state.day}.`);
 }
+// Notices live outside #app, because render() replaces everything inside it.
+let toastTimer = 0;
+function toast(message, { actionLabel = "", action = null, error = false, ms = error ? 9000 : 4000 } = {}) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    document.body.append(el);
+  }
+  el.className = `toast is-shown${error ? " is-error" : ""}`;
+  el.setAttribute("role", error ? "alert" : "status");
+  const text = document.createElement("span");
+  text.textContent = message;
+  el.replaceChildren(text);
+  if (actionLabel) {
+    const btn = document.createElement("button");
+    btn.textContent = actionLabel;
+    btn.onclick = () => { hideToast(); action(); };
+    el.append(btn);
+  }
+  const close = document.createElement("button");
+  close.className = "toast-close";
+  close.textContent = "×";
+  close.setAttribute("aria-label", "Dismiss");
+  close.onclick = hideToast;
+  el.append(close);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, ms);
+}
+function hideToast() { document.getElementById("toast")?.classList.remove("is-shown"); }
 function copyReadings() {
   const text = [`PGH Bible Plan — Day ${state.day}`, ...currentReadings().map(r => `${r.list.id}. ${refText(r.current)}`)].join("\n");
-  navigator.clipboard?.writeText(text).then(() => alert("Copied today’s readings."), () => prompt("Copy today’s readings", text));
+  navigator.clipboard?.writeText(text).then(() => toast("Copied today’s readings."), () => prompt("Copy today’s readings", text));
 }
 function scrollToChapter(i) {
   document.getElementById(`chapter-panel-${i}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -349,22 +407,22 @@ async function importBibleJson(file) {
   if (!file) return;
   let raw;
   try { raw = JSON.parse(await file.text()); }
-  catch { alert("That file isn't valid JSON. Check it in a text editor, or see the (i) button for the expected shape."); return; }
+  catch { toast("That file isn't valid JSON. Check it in a text editor, or see the (i) button for the expected shape.", { error: true }); return; }
 
   let parsed;
   try { parsed = parseBibleFile(raw, file.name.replace(/\.json$/i, "")); }
-  catch (err) { alert(err.message); return; }
+  catch (err) { toast(err.message, { error: true }); return; }
 
   const { name, chapters, skipped } = parsed;
   if (!chapters.length) {
-    alert(`No chapters could be read from that file. References must look like “Genesis 1” and each verse needs its text — see the (i) button.`);
+    toast(`No chapters could be read from that file. References must look like “Genesis 1” and each verse needs its text — see the (i) button.`, { error: true });
     return;
   }
 
   try {
     for (const { ref, chapter } of chapters) await dbSet(`${name}:${ref}`, chapter);
   } catch (err) {
-    alert(`Saved ${name} only partly — this browser refused to store it: ${err.message}`);
+    toast(`Saved ${name} only partly — this browser refused to store it: ${err.message}`, { error: true });
     return;
   }
 
@@ -372,8 +430,8 @@ async function importBibleJson(file) {
   state.translation = name;
   const note = skipped ? ` ${skipped} entr${skipped === 1 ? "y was" : "ies were"} skipped.` : "";
   const count = `${chapters.length} chapter${chapters.length === 1 ? "" : "s"}`;
-  alert(`Imported ${count} as ${name}.${note} Files stayed in this browser.`);
   saveState();
+  toast(`Imported ${count} as ${name}.${note} Files stayed in this browser.`);
 }
 
 function refreshVoices() { voices = speechSynthesis?.getVoices?.() || []; }
@@ -471,7 +529,7 @@ function speakCurrent() {
     return;
   }
   if (!("speechSynthesis" in window)) {
-    alert("Browser speech is not available here.");
+    toast("Read-aloud isn't available in this browser.", { error: true });
     audio.playing = false;
     renderAudioPlayer();
     return;
@@ -675,7 +733,7 @@ if (typeof document !== "undefined") {
 if (typeof module !== "undefined") {
   module.exports = {
     BOOKS, PLAN, START, positionsForDay, indexOfRef, parseRef,
-    initialState, loadState, persistState, isDone, withDone,
+    initialState, loadState, persistState, isDone, withDone, advanceDay,
     voiceOptionsHtml, clampRate, pickVoice,
     normalizeImportedChapter, normalizeVerses, parseProgressFile, parseBibleFile,
     loadKjvChapter
