@@ -5,10 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="Unofficial Professor Grant Horner Bible Reading Plan tracker with KJV text, local Bible import, and browser read-aloud." />
   <title>Professor Grant Horner Bible Reading Plan</title>
-  <link rel="stylesheet" href="styles.css?v=ios-audio-fix2" />
+
+  <meta name="theme-color" content="#8d321d" />
+  <meta name="color-scheme" content="light" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+
+  <!-- iOS still reads the apple-prefixed pair; the unprefixed one is the standard. -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="PGH Plan" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Professor Grant Horner Bible Reading Plan" />
+  <meta property="og:description" content="Ten rotating chapter lists, local progress, KJV text, and browser read-aloud." />
+
+  <link rel="stylesheet" href="styles.css?v=housekeeping1" />
 </head>
 <body>
   <main id="app"></main>
-  <script src="app.js?v=ios-audio-fix2"></script>
+  <noscript>
+    <p style="max-width:60ch;margin:3rem auto;font-family:Georgia,serif">
+      This reading-plan tracker needs JavaScript: it keeps your progress in the browser
+      and loads chapter text on demand.
+    </p>
+  </noscript>
+  <script src="app.js?v=housekeeping1"></script>
 </body>
 </html>

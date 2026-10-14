@@ -35,7 +35,7 @@ const KEY = "pghBiblePlan.public.state.v1";
 const DB_NAME = "pghBiblePlanBibleStore";
 const DB_VERSION = 1;
 
-let state = loadState();
+let state = null;
 let currentTranslation = "KJV";
 let renderToken = 0;
 let voices = [];
@@ -72,16 +72,36 @@ function positionsForDay(day) {
   return PLAN.map((list, i) => (indexOfRef(list, START[i]) + offset) % list.chapters.length);
 }
 function initialState() {
-  return { day: 1, positions: positionsForDay(1), translation: "KJV", history: [], importedNames: [] };
+  return { day: 1, positions: positionsForDay(1), done: {}, translation: "KJV", history: [], importedNames: [], voice: "", rate: 1 };
 }
 function loadState() {
   try { return { ...initialState(), ...JSON.parse(localStorage.getItem(KEY)) }; }
   catch { return initialState(); }
 }
-function persistState() { localStorage.setItem(KEY, JSON.stringify(state)); }
+function persistState() {
+  // Private tabs deny writes. Losing progress is survivable; throwing here is not,
+  // because it aborts saveState() before render() and the page stops responding.
+  try { localStorage.setItem(KEY, JSON.stringify(state)); }
+  catch { /* progress stays in memory for this session */ }
+}
 function saveState() { persistState(); render(); }
 function currentReadings() {
   return PLAN.map((list, i) => ({ list, index: i, current: list.chapters[state.positions[i]], next: list.chapters[(state.positions[i] + 1) % list.chapters.length] }));
+}
+// A list is done while it still sits where it was marked. Next, Complete Day and
+// Set day all move day or position, so the mark lapses with no cleanup. The day is
+// part of the stamp because short lists (Proverbs) wrap back to the same position.
+const doneStamp = (st, i) => `${st.day}:${st.positions[i]}`;
+function isDone(st, i) { return st.done?.[i] === doneStamp(st, i); }
+function withDone(st, i, done) {
+  const marks = { ...st.done };
+  if (done) marks[i] = doneStamp(st, i);
+  else delete marks[i];
+  return { ...st, done: marks };
+}
+function setDone(i, done) {
+  state = withDone(state, i, done);
+  saveState();
 }
 
 function move(i, delta) {
@@ -96,6 +116,7 @@ function completeDay() {
   state.history = state.history.slice(0, 90);
   state.positions = state.positions.map((p, i) => (p + 1) % PLAN[i].chapters.length);
   state.day += 1;
+  state.done = {};
   stopAudio();
   saveState();
 }
@@ -125,16 +146,16 @@ function exportData() {
   a.download = "pgh-bible-plan-progress.json";
   a.click();
 }
-function importData(file) {
+async function importData(file) {
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    state = { ...initialState(), ...JSON.parse(reader.result) };
-    persistState();
-    stopAudio();
-    render();
-  };
-  reader.readAsText(file);
+  let result;
+  try { result = parseProgressFile(await file.text()); }
+  catch (err) { alert(`Could not read that file: ${err.message}`); return; }
+  if (!result.ok) { alert(result.error); return; }
+  state = result.state;
+  persistState();
+  stopAudio();
+  render();
 }
 function copyReadings() {
   const text = [`PGH Bible Plan — Day ${state.day}`, ...currentReadings().map(r => `${r.list.id}. ${refText(r.current)}`)].join("\n");
@@ -177,13 +198,28 @@ async function dbSet(key, val) {
   });
 }
 
+// render() reloads all ten chapters on every state change, and Listen reads the same
+// files again. The promise (not the result) is cached, so ten parallel callers asking
+// for one chapter share a single request. Failures are evicted so they can be retried.
+const chapterCache = new Map();
+function loadKjvChapter(slugName) {
+  if (!chapterCache.has(slugName)) {
+    const pending = fetch(`data/kjv/${slugName}.json`)
+      .then(r => {
+        if (!r.ok) throw new Error(`Missing chapter file ${slugName}.json (${r.status})`);
+        return r.json();
+      })
+      .catch(err => { chapterCache.delete(slugName); throw err; });
+    chapterCache.set(slugName, pending);
+  }
+  return chapterCache.get(slugName);
+}
 async function getChapter(ch) {
   if (state.translation && state.translation !== "KJV") {
     const imported = await dbGet(`${state.translation}:${refText(ch)}`);
     if (imported) return imported;
   }
-  const r = await fetch(`data/kjv/${slug(ch)}.json`);
-  return await r.json();
+  return loadKjvChapter(slug(ch));
 }
 function verseHtml(chapter) {
   return chapter.verses.map(v => `<p class="verse"><sup>${v.v}</sup><span>${esc(v.t)}</span></p>`).join("");
@@ -203,9 +239,56 @@ async function loadChapters(readings) {
 }
 
 function normalizeImportedChapter(raw) {
+  if (!raw || typeof raw !== "object") return null;
   if (raw.ref && raw.verses) return raw;
   if (raw.book && raw.chapter && raw.verses) return { ...raw, ref: `${raw.book} ${raw.chapter}` };
   return null;
+}
+function normalizeVerses(val) {
+  const list = Array.isArray(val) ? val : val?.verses;
+  if (!Array.isArray(list)) return null;
+  return list.map((x, i) => (typeof x === "string" ? { v: i + 1, t: x } : x));
+}
+
+// Both import paths used to parse inline, so a bad file threw into a FileReader
+// callback or an async onchange handler and vanished. Parsing is separated from
+// I/O here so failures come back as values the caller can show the user.
+function parseProgressFile(text) {
+  let raw;
+  try { raw = JSON.parse(text); }
+  catch { return { ok: false, error: "That file isn't valid JSON. Pick the file you got from Export." }; }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, error: "That doesn't look like a progress backup." };
+  }
+  if (!Array.isArray(raw.positions) || raw.positions.length !== PLAN.length) {
+    return { ok: false, error: `That doesn't look like a progress backup — it has no reading position for all ${PLAN.length} lists. To load a Bible translation, use “Bring your own Bible JSON” instead.` };
+  }
+  return { ok: true, state: { ...initialState(), ...raw } };
+}
+function parseBibleFile(raw, fallbackName) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("That file isn't a Bible JSON object. See the (i) button for the expected shape.");
+  }
+  const name = raw.translation || raw.name || fallbackName || "Imported";
+  const source = raw.chapters || raw;
+  const chapters = [];
+  let skipped = 0;
+  if (Array.isArray(source)) {
+    for (const item of source) {
+      const ch = normalizeImportedChapter(item);
+      const verses = ch && normalizeVerses(ch);
+      if (ch?.ref && verses) chapters.push({ ref: ch.ref, chapter: { ...ch, verses, translation: name } });
+      else skipped++;
+    }
+  } else {
+    for (const [ref, val] of Object.entries(source)) {
+      const verses = normalizeVerses(val);
+      if (!verses || !ref.includes(" ")) { skipped++; continue; }
+      const { book, chapter } = parseRef(ref);
+      chapters.push({ ref, chapter: { translation: name, ref, book, chapter, verses } });
+    }
+  }
+  return { name, chapters, skipped };
 }
 let importHelpOpen = false;
 function toggleImportHelp() {
@@ -249,44 +332,54 @@ function importHelpHtml() {
 }
 async function importBibleJson(file) {
   if (!file) return;
-  const raw = JSON.parse(await file.text());
-  const name = raw.translation || raw.name || file.name.replace(/\.json$/i, "") || "Imported";
-  const chapters = raw.chapters || raw;
-  let count = 0;
-  if (Array.isArray(chapters)) {
-    for (const item of chapters) {
-      const ch = normalizeImportedChapter(item);
-      if (ch?.ref && ch?.verses) {
-        await dbSet(`${name}:${ch.ref}`, { ...ch, translation: name });
-        count++;
-      }
-    }
-  } else {
-    for (const [ref, val] of Object.entries(chapters)) {
-      const parsed = parseRef(ref);
-      const verses = Array.isArray(val) ? val.map((x, i) => typeof x === "string" ? { v: i + 1, t: x } : x) : val.verses;
-      if (verses) {
-        await dbSet(`${name}:${ref}`, { translation: name, ref, book: parsed.book, chapter: parsed.chapter, verses });
-        count++;
-      }
-    }
+  let raw;
+  try { raw = JSON.parse(await file.text()); }
+  catch { alert("That file isn't valid JSON. Check it in a text editor, or see the (i) button for the expected shape."); return; }
+
+  let parsed;
+  try { parsed = parseBibleFile(raw, file.name.replace(/\.json$/i, "")); }
+  catch (err) { alert(err.message); return; }
+
+  const { name, chapters, skipped } = parsed;
+  if (!chapters.length) {
+    alert(`No chapters could be read from that file. References must look like “Genesis 1” and each verse needs its text — see the (i) button.`);
+    return;
   }
+
+  try {
+    for (const { ref, chapter } of chapters) await dbSet(`${name}:${ref}`, chapter);
+  } catch (err) {
+    alert(`Saved ${name} only partly — this browser refused to store it: ${err.message}`);
+    return;
+  }
+
   state.importedNames = [...new Set([...(state.importedNames || []), name])];
   state.translation = name;
-  alert(`Imported ${count} chapters as ${name}. Files stayed in this browser.`);
+  const note = skipped ? ` ${skipped} entr${skipped === 1 ? "y was" : "ies were"} skipped.` : "";
+  const count = `${chapters.length} chapter${chapters.length === 1 ? "" : "s"}`;
+  alert(`Imported ${count} as ${name}.${note} Files stayed in this browser.`);
   saveState();
 }
 
 function refreshVoices() { voices = speechSynthesis?.getVoices?.() || []; }
-if ("speechSynthesis" in window) {
+if (typeof window !== "undefined" && "speechSynthesis" in window) {
   refreshVoices();
   speechSynthesis.onvoiceschanged = () => { refreshVoices(); renderVoiceSelectOnly(); };
 }
+// Voice and speed live in state, not in the DOM. render() rewrites all of #app, so
+// anything read back off a control is lost the next time any button is pressed.
 function selectedVoice() {
-  const name = document.getElementById("voiceSelect")?.value;
-  return voices.find(v => v.name === name) || voices.find(v => /english|us|uk/i.test(v.lang)) || voices[0];
+  return voices.find(v => v.name === state?.voice)
+    || voices.find(v => /english|us|uk/i.test(v.lang))
+    || voices[0];
 }
-function rate() { return Number(document.getElementById("rateRange")?.value || 1); }
+function clampRate(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(1.5, Math.max(0.75, n)) : 1;
+}
+function rate() { return clampRate(state?.rate); }
+function setVoice(name) { state.voice = name; persistState(); }
+function setRate(v) { state.rate = clampRate(v); persistState(); }
 function buildChapterItems(chapter, label, { announce = false, chapterIndex = 0 } = {}) {
   const items = [];
   if (announce) {
@@ -323,14 +416,16 @@ async function speakChapter(i) {
 }
 async function speakAll() {
   primeSpeech();
-  const items = [];
-  const readings = currentReadings();
-  for (let i = 0; i < readings.length; i++) {
-    const r = readings[i];
-    const ch = await getChapter(r.current);
-    items.push(...buildChapterItems(ch, refText(r.current), { announce: true, chapterIndex: i }));
-  }
-  setAudioQueue(items, `Day ${state.day}: all ten chapters`, `${items.length} passage segments`, "all");
+  // Skip chapters already marked done; once everything is done, Listen replays the day.
+  const all = currentReadings();
+  const open = all.filter(r => !isDone(state, r.index));
+  const readings = open.length ? open : all;
+  const chapters = await Promise.all(readings.map(r => getChapter(r.current)));
+  const items = chapters.flatMap((ch, i) =>
+    buildChapterItems(ch, refText(readings[i].current), { announce: true, chapterIndex: i })
+  );
+  const what = readings.length === all.length ? "all ten chapters" : `${readings.length} chapter${readings.length === 1 ? "" : "s"} left`;
+  setAudioQueue(items, `Day ${state.day}: ${what}`, `${items.length} passage segments`, "all");
 }
 function setAudioQueue(items, title, subtitle, mode) {
   stopAudio(false);
@@ -387,13 +482,39 @@ function speakCurrent() {
   speechSynthesis.speak(u);
   renderAudioPlayer();
 }
-function audioProgress() {
+function audioProgress(index = audio.index) {
   if (audio.items.length < 2) return 0;
-  return Math.min(100, Math.round((audio.index / (audio.items.length - 1)) * 100));
+  return Math.min(100, Math.round((index / (audio.items.length - 1)) * 100));
+}
+function clampIndex(value) {
+  return Math.max(0, Math.min(Number(value) || 0, audio.items.length - 1));
+}
+
+// Dragging the scrubber used to seek on every oninput, and seeking re-rendered the
+// dock -- replacing the very input the finger was on, which aborts the drag. Now the
+// drag only paints a preview, and the seek is committed once on release.
+let scrubbing = false;
+function beginScrub() { scrubbing = true; }
+function previewSeek(value) {
+  const i = clampIndex(value);
+  const position = document.getElementById("audioPosition");
+  if (position) position.textContent = `${i + 1} / ${audio.items.length}`;
+  const label = document.getElementById("audioNowPlaying");
+  if (label) label.textContent = audio.items[i]?.label || "";
+  const bar = document.querySelector(".scrubber");
+  if (bar) bar.style.setProperty("--played", `${audioProgress(i)}%`);
+}
+function commitSeek(value) {
+  scrubbing = false;
+  seekAudio(value);
+}
+function cancelScrub() {
+  scrubbing = false;
+  renderAudioPlayer();
 }
 function seekAudio(index) {
   if (!audio.items.length) return;
-  audio.index = Math.max(0, Math.min(Number(index), audio.items.length - 1));
+  audio.index = clampIndex(index);
   audio.paused = false;
   audio.playing = true;
   speakCurrent();
@@ -430,10 +551,16 @@ function renderVoiceSelectOnly() {
   const el = document.getElementById("voiceSelect");
   if (el) el.innerHTML = voiceOptions();
 }
-function voiceOptions() {
-  return voices.map(v => `<option value="${esc(v.name)}">${esc(v.name)} · ${esc(v.lang)}</option>`).join("") || "<option>No voices found yet</option>";
+function voiceOptionsHtml(list, selectedName) {
+  if (!list.length) return `<option value="">No voices found yet</option>`;
+  return list.map(v =>
+    `<option value="${esc(v.name)}"${v.name === selectedName ? " selected" : ""}>${esc(v.name)} · ${esc(v.lang)}</option>`
+  ).join("");
 }
+function voiceOptions() { return voiceOptionsHtml(voices, state?.voice); }
 function renderAudioPlayer() {
+  // A verse ending mid-drag would otherwise replace the input under the finger.
+  if (scrubbing) return;
   const el = document.getElementById("audioDock");
   if (el) el.outerHTML = audioPlayerHtml();
 }
@@ -476,11 +603,11 @@ function audioPlayerHtml() {
     <button class="audio-tab" onclick="toggleAudioOpen()">Hide</button>
     <div class="audio-shell">
       <div class="audio-topline">
-        <div><p class="eyebrow">Browser audio</p><h3>${esc(audio.title)}</h3><span>${esc(current?.label || audio.subtitle || "Ready")}</span></div>
+        <div><p class="eyebrow">Browser audio</p><h3>${esc(audio.title)}</h3><span id="audioNowPlaying">${esc(current?.label || audio.subtitle || "Ready")}</span></div>
       </div>
       <div class="audio-body">
-        <div class="scrubber-wrap"><input class="scrubber" type="range" min="0" max="${max}" value="${audio.index}" ${audio.items.length ? "" : "disabled"} oninput="seekAudio(this.value)" style="--played:${audioProgress()}%"><div class="audio-marks">${markersHtml()}</div></div>
-        <div class="audio-meta"><span>${audio.items.length ? `${audio.index + 1} / ${audio.items.length}` : "No audio queued"}</span><span>${audio.paused ? "Paused" : audio.playing ? "Playing" : "Stopped"}</span></div>
+        <div class="scrubber-wrap"><input class="scrubber" type="range" min="0" max="${max}" value="${audio.index}" ${audio.items.length ? "" : "disabled"} aria-label="Playback position" onpointerdown="beginScrub()" oninput="previewSeek(this.value)" onchange="commitSeek(this.value)" onpointercancel="cancelScrub()" style="--played:${audioProgress()}%"><div class="audio-marks">${markersHtml()}</div></div>
+        <div class="audio-meta"><span id="audioPosition">${audio.items.length ? `${audio.index + 1} / ${audio.items.length}` : "No audio queued"}</span><span>${audio.paused ? "Paused" : audio.playing ? "Playing" : "Stopped"}</span></div>
         <div class="audio-controls"><button onclick="stepAudio(-10)">-10</button><button onclick="stepAudio(-1)">Back</button><button class="audio-primary" onclick="primaryAction()">${primaryLabel()}</button><button onclick="stepAudio(1)">Next</button><button onclick="stepAudio(10)">+10</button><button onclick="stopAudio()">Stop</button></div>
       </div>
     </div>
@@ -490,26 +617,47 @@ function audioPlayerHtml() {
 function render() {
   currentTranslation = state.translation || "KJV";
   const readings = currentReadings();
+  const open = readings.filter(r => !isDone(state, r.index));
+  const done = readings.filter(r => isDone(state, r.index));
   const imported = state.importedNames || [];
   $("#app").innerHTML = `
     <section class="hero"><div class="seal">PGH</div><div><p class="eyebrow">Unofficial reading-plan tool</p><h1>Professor Grant Horner Bible Reading Plan</h1><p class="sub">Ten rotating chapter lists, local progress, KJV text, optional bring-your-own Bible import, and browser read-aloud.</p></div><div class="hero-side"><div class="dayplate" onclick="setDay()"><span>Current day</span><strong>${state.day}</strong><em>tap to edit</em></div><div class="hero-buttons"><button class="hero-btn read" onclick="scrollToReader()">Read</button><button class="hero-btn listen" onclick="speakAll()">Listen</button></div></div></section>
     <section class="notice"><strong>Unofficial.</strong> Not affiliated with or endorsed by Professor Grant Horner, The Lockman Foundation, or any Bible publisher. Included text is KJV; imported Bible files stay in your browser.</section>
     <section class="actions"><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button><button onclick="copyReadings()">Copy readings</button><button onclick="exportData()">Export</button><label class="button">Import progress <input type="file" accept="application/json" onchange="importData(this.files[0])"></label><button onclick="resetPlan()">Reset</button></section>
-    <section class="settings"><div><label>Translation <select onchange="state.translation=this.value; saveState()"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Voice <select id="voiceSelect">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="1"></label></div></section>
-    <section class="grid">${readings.map(r => card(r.list, r.index)).join("")}</section>
-    <section class="reader" id="reader"><div class="reader-head"><p class="eyebrow">${esc(currentTranslation)} chapter text</p><h2>Today’s ten chapters</h2></div>${readings.map(chapterPanel).join("")}</section>
+    <section class="settings"><div><label>Translation <select onchange="state.translation=this.value; saveState()"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Voice <select id="voiceSelect" onchange="setVoice(this.value)">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="${rate()}" onchange="setRate(this.value)"></label></div></section>
+    ${doneStripHtml(done)}
+    <section class="grid">${open.map(r => card(r.list, r.index)).join("")}</section>
+    <section class="reader" id="reader"><div class="reader-head"><p class="eyebrow">${esc(currentTranslation)} chapter text</p><h2>${open.length === readings.length ? "Today’s ten chapters" : `${open.length} of ten left`}</h2></div>${open.length ? open.map(chapterPanel).join("") : `<div class="all-done"><p>All ten chapters read.</p><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button></div>`}</section>
     <section class="history"><h2>Recent completed days</h2>${state.history.length ? state.history.slice(0, 12).map(h => `<details><summary>Day ${h.day} · ${new Date(h.date).toLocaleDateString()}</summary><ol>${h.readings.map(r => `<li>${esc(r.ref)}</li>`).join("")}</ol></details>`).join("") : `<p>No completed days logged yet.</p>`}</section>
     ${audioPlayerHtml()}`;
-  loadChapters(readings);
+  loadChapters(open);
+}
+function doneStripHtml(done) {
+  if (!done.length) return "";
+  return `<section class="done-strip"><span>Done today</span>${done.map(r => `<button onclick="setDone(${r.index}, false)" title="Show ${esc(refText(r.current))} again" aria-label="Undo done: ${esc(refText(r.current))}"><s>${esc(refText(r.current))}</s> <i>↺</i></button>`).join("")}</section>`;
 }
 function card(list, i) {
   const current = list.chapters[state.positions[i]];
   const next = list.chapters[(state.positions[i] + 1) % list.chapters.length];
   const books = [...new Set(list.chapters.map(ch => ch.book))];
-  return `<article class="card" style="--delay:${i * 45}ms"><div class="num">List ${list.id}</div><div class="meter" style="--p:${pct(state.positions[i], list.chapters.length)}"><span>${pct(state.positions[i], list.chapters.length)}%</span></div><h2>${esc(refText(current))}</h2><p>${esc(list.name)} · ${list.chapters.length} days · next: ${esc(refText(next))}</p><div class="tools"><button onclick="move(${i},-1)">← Previous</button><button onclick="move(${i},1)">Next →</button><button onclick="scrollToChapter(${i})">Read</button><button onclick="speakChapter(${i})">Audio</button></div><details><summary>Manual set</summary><div class="editrow"><select onchange="this.nextElementSibling.max=BOOKS[this.value]">${books.map(b => `<option ${b === current.book ? "selected" : ""}>${esc(b)}</option>`).join("")}</select><input type="number" min="1" max="${BOOKS[current.book]}" value="${current.chapter}"><button onclick="setReference(${i}, this.parentElement.children[0].value, this.parentElement.children[1].value)">Set</button></div></details></article>`;
+  return `<article class="card" style="--delay:${i * 45}ms"><div class="num">List ${list.id}</div><div class="meter" style="--p:${pct(state.positions[i], list.chapters.length)}"><span>${pct(state.positions[i], list.chapters.length)}%</span></div><h2>${esc(refText(current))}</h2><p>${esc(list.name)} · ${list.chapters.length} days · next: ${esc(refText(next))}</p><div class="tools"><button onclick="move(${i},-1)">← Previous</button><button onclick="move(${i},1)">Next →</button><button onclick="scrollToChapter(${i})">Read</button><button onclick="speakChapter(${i})">Audio</button><button class="done-btn" onclick="setDone(${i}, true)">✓ Done</button></div><details><summary>Manual set</summary><div class="editrow"><select onchange="this.nextElementSibling.max=BOOKS[this.value]">${books.map(b => `<option ${b === current.book ? "selected" : ""}>${esc(b)}</option>`).join("")}</select><input type="number" min="1" max="${BOOKS[current.book]}" value="${current.chapter}"><button onclick="setReference(${i}, this.parentElement.children[0].value, this.parentElement.children[1].value)">Set</button></div></details></article>`;
 }
 function chapterPanel(r) {
-  return `<article class="chapter-panel" id="chapter-panel-${r.index}"><header><span>List ${r.list.id}</span><h3>${esc(refText(r.current))}</h3><em>${esc(r.list.name)}</em><button onclick="speakChapter(${r.index})">Play chapter</button></header><div class="chapter-body" id="chapter-body-${r.index}"><p class="loading">Loading ${esc(refText(r.current))}…</p></div></article>`;
+  return `<article class="chapter-panel" id="chapter-panel-${r.index}"><header><span>List ${r.list.id}</span><h3>${esc(refText(r.current))}</h3><em>${esc(r.list.name)}</em><button onclick="speakChapter(${r.index})">Play chapter</button><button class="done-btn" onclick="setDone(${r.index}, true)">✓ Mark done</button></header><div class="chapter-body" id="chapter-body-${r.index}"><p class="loading">Loading ${esc(refText(r.current))}…</p></div></article>`;
 }
 
-render();
+// Loaded two ways: as a browser <script>, where it renders on load, and as a
+// CommonJS module under `node --test`, which only pulls out the pure helpers.
+if (typeof document !== "undefined") {
+  state = loadState();
+  render();
+}
+if (typeof module !== "undefined") {
+  module.exports = {
+    BOOKS, PLAN, START, positionsForDay, indexOfRef, parseRef,
+    initialState, loadState, persistState, isDone, withDone,
+    voiceOptionsHtml, clampRate,
+    normalizeImportedChapter, normalizeVerses, parseProgressFile, parseBibleFile,
+    loadKjvChapter
+  };
+}

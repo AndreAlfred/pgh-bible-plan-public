@@ -1,0 +1,14 @@
+{
+  "name": "Professor Grant Horner Bible Reading Plan",
+  "short_name": "PGH Plan",
+  "description": "Unofficial tracker for the Professor Grant Horner Bible Reading Plan, with KJV text, local Bible import, and browser read-aloud.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f9f0df",
+  "theme_color": "#8d321d",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

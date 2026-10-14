@@ -1,0 +1,47 @@
+const test = require("node:test");
+const assert = require("node:assert");
+
+const { voiceOptionsHtml, clampRate, initialState } = require("../app.js");
+
+const VOICES = [
+  { name: "Samantha", lang: "en-US" },
+  { name: "Daniel", lang: "en-GB" },
+  { name: "American Voice 5", lang: "en-US" }
+];
+
+test("the saved voice is the one marked selected", () => {
+  const html = voiceOptionsHtml(VOICES, "American Voice 5");
+  assert.match(html, /<option value="American Voice 5" selected>/);
+  assert.strictEqual(html.match(/selected/g).length, 1);
+});
+
+test("no option is preselected when the saved voice is not installed on this device", () => {
+  const html = voiceOptionsHtml(VOICES, "Voice From Another Phone");
+  assert.doesNotMatch(html, /selected/);
+});
+
+test("an empty voice list still renders a placeholder option", () => {
+  const html = voiceOptionsHtml([], "Samantha");
+  assert.match(html, /<option/);
+  assert.doesNotMatch(html, /selected/);
+});
+
+test("voice names with quotes cannot break out of the value attribute", () => {
+  const html = voiceOptionsHtml([{ name: 'Ro"bot', lang: "en-US" }], 'Ro"bot');
+  assert.doesNotMatch(html, /value="Ro"bot"/);
+  assert.match(html, /&quot;/);
+});
+
+test("speed is clamped to the range the slider offers", () => {
+  assert.strictEqual(clampRate(1.25), 1.25);
+  assert.strictEqual(clampRate(0.1), 0.75);
+  assert.strictEqual(clampRate(9), 1.5);
+  assert.strictEqual(clampRate("abc"), 1);
+  assert.strictEqual(clampRate(undefined), 1);
+});
+
+test("a fresh plan starts with no chosen voice and normal speed", () => {
+  const state = initialState();
+  assert.strictEqual(state.voice, "");
+  assert.strictEqual(state.rate, 1);
+});

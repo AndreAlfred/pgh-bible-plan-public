@@ -34,3 +34,29 @@ Preferred shape:
 ```
 
 Also accepted: `chapters` as an array of chapter objects with `book`, `chapter`, and `verses`.
+
+## Development
+
+Static files, no build step and no dependencies. Open `index.html` through any local
+server (`python3 -m http.server`) — opening it as a `file://` URL will not work, because
+chapter text is loaded with `fetch`.
+
+### Tests
+
+`app.js` loads two ways: as a browser `<script>`, where it renders on load, and as a
+CommonJS module, where only the pure helpers are exported. That makes the plan maths and
+the file parsers testable with Node's built-in runner — no `package.json`, no install.
+
+```bash
+node --test test/*.test.js
+```
+
+Note the glob. `node --test test/` (the directory form) fails on Node 25.
+
+There is deliberately no `package.json`: Vercel changes its build behaviour when it finds
+one, and this project wants to stay a plain static deploy.
+
+Covered: the ten-list rotation and day maths, progress-file and Bible-file parsing,
+voice/speed persistence, and the chapter fetch cache. Not covered: anything touching the
+DOM, which is still verified by hand in a browser.
+
