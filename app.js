@@ -38,6 +38,7 @@ const DB_VERSION = 1;
 let state = null;
 let currentTranslation = "KJV";
 let renderToken = 0;
+let firstRender = true;
 let voices = [];
 let audio = {
   items: [],
@@ -74,9 +75,18 @@ function positionsForDay(day) {
 function initialState() {
   return { day: 1, positions: positionsForDay(1), done: {}, translation: "KJV", history: [], importedNames: [], voice: "", rate: 1 };
 }
+// A position past the end of its list makes render() throw, and because the bad
+// state is already saved, the page would stay blank on every reload.
+const validDay = day => Number.isInteger(day) && day >= 1;
+const validPositions = positions => Array.isArray(positions) && positions.length === PLAN.length &&
+  positions.every((p, i) => Number.isInteger(p) && p >= 0 && p < PLAN[i].chapters.length);
 function loadState() {
-  try { return { ...initialState(), ...JSON.parse(localStorage.getItem(KEY)) }; }
+  let saved;
+  try { saved = { ...initialState(), ...JSON.parse(localStorage.getItem(KEY)) }; }
   catch { return initialState(); }
+  if (!validDay(saved.day)) return initialState();
+  if (!validPositions(saved.positions)) saved.positions = positionsForDay(saved.day);
+  return saved;
 }
 function persistState() {
   // Private tabs deny writes. Losing progress is survivable; throwing here is not,
@@ -168,15 +178,17 @@ function scrollToReader() {
   document.getElementById("reader")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+// One connection for the page's lifetime; opening per read meant ten per render.
+let dbPromise = null;
 function db() {
-  return new Promise((resolve, reject) => {
+  return dbPromise ||= new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const d = req.result;
       if (!d.objectStoreNames.contains("chapters")) d.createObjectStore("chapters");
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => { dbPromise = null; reject(req.error); };
   });
 }
 async function dbGet(key) {
@@ -262,6 +274,9 @@ function parseProgressFile(text) {
   }
   if (!Array.isArray(raw.positions) || raw.positions.length !== PLAN.length) {
     return { ok: false, error: `That doesn't look like a progress backup — it has no reading position for all ${PLAN.length} lists. To load a Bible translation, use “Bring your own Bible JSON” instead.` };
+  }
+  if (!validPositions(raw.positions) || !validDay(raw.day ?? 1)) {
+    return { ok: false, error: "That progress backup is damaged — its day or reading positions are out of range. Nothing was changed." };
   }
   return { ok: true, state: { ...initialState(), ...raw } };
 }
@@ -368,16 +383,18 @@ if (typeof window !== "undefined" && "speechSynthesis" in window) {
 }
 // Voice and speed live in state, not in the DOM. render() rewrites all of #app, so
 // anything read back off a control is lost the next time any button is pressed.
-function selectedVoice() {
-  return voices.find(v => v.name === state?.voice)
-    || voices.find(v => /english|us|uk/i.test(v.lang))
-    || voices[0];
+// Match on the language prefix: a looser /us/ test also matched es-US (Spanish).
+const isEnglish = v => /^en([-_]|$)/i.test(v.lang || "");
+function pickVoice(list, savedName) {
+  return list.find(v => v.name === savedName) || list.find(isEnglish) || list[0];
 }
+function selectedVoice() { return pickVoice(voices, state?.voice); }
 function clampRate(v) {
   const n = Number(v);
   return Number.isFinite(n) ? Math.min(1.5, Math.max(0.75, n)) : 1;
 }
 function rate() { return clampRate(state?.rate); }
+const rateLabel = v => `${Number(v).toFixed(2).replace(/0$/, "")}×`;
 function setVoice(name) { state.voice = name; persistState(); }
 function setRate(v) { state.rate = clampRate(v); persistState(); }
 function buildChapterItems(chapter, label, { announce = false, chapterIndex = 0 } = {}) {
@@ -553,7 +570,9 @@ function renderVoiceSelectOnly() {
 }
 function voiceOptionsHtml(list, selectedName) {
   if (!list.length) return `<option value="">No voices found yet</option>`;
-  return list.map(v =>
+  // Apple devices ship 100+ voices; put English first rather than burying it.
+  const ordered = [...list.filter(isEnglish), ...list.filter(v => !isEnglish(v))];
+  return ordered.map(v =>
     `<option value="${esc(v.name)}"${v.name === selectedName ? " selected" : ""}>${esc(v.name)} · ${esc(v.lang)}</option>`
   ).join("");
 }
@@ -621,15 +640,16 @@ function render() {
   const done = readings.filter(r => isDone(state, r.index));
   const imported = state.importedNames || [];
   $("#app").innerHTML = `
-    <section class="hero"><div class="seal">PGH</div><div><p class="eyebrow">Unofficial reading-plan tool</p><h1>Professor Grant Horner Bible Reading Plan</h1><p class="sub">Ten rotating chapter lists, local progress, KJV text, optional bring-your-own Bible import, and browser read-aloud.</p></div><div class="hero-side"><div class="dayplate" onclick="setDay()"><span>Current day</span><strong>${state.day}</strong><em>tap to edit</em></div><div class="hero-buttons"><button class="hero-btn read" onclick="scrollToReader()">Read</button><button class="hero-btn listen" onclick="speakAll()">Listen</button></div></div></section>
+    <section class="hero"><div class="seal">PGH</div><div><p class="eyebrow">Unofficial reading-plan tool</p><h1>Professor Grant Horner Bible Reading Plan</h1><p class="sub">Ten rotating chapter lists, local progress, KJV text, optional bring-your-own Bible import, and browser read-aloud.</p></div><div class="hero-side"><button class="dayplate" onclick="setDay()" aria-label="Current day ${state.day}. Change day"><span>Current day</span><strong>${state.day}</strong><em>tap to edit</em></button><div class="hero-buttons"><button class="hero-btn read" onclick="scrollToReader()">Read</button><button class="hero-btn listen" onclick="speakAll()">Listen</button></div></div></section>
     <section class="notice"><strong>Unofficial.</strong> Not affiliated with or endorsed by Professor Grant Horner, The Lockman Foundation, or any Bible publisher. Included text is KJV; imported Bible files stay in your browser.</section>
     <section class="actions"><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button><button onclick="copyReadings()">Copy readings</button><button onclick="exportData()">Export</button><label class="button">Import progress <input type="file" accept="application/json" onchange="importData(this.files[0])"></label><button onclick="resetPlan()">Reset</button></section>
-    <section class="settings"><div><label>Translation <select onchange="state.translation=this.value; saveState()"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Voice <select id="voiceSelect" onchange="setVoice(this.value)">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="${rate()}" onchange="setRate(this.value)"></label></div></section>
+    <section class="settings"><div><label>Translation <select onchange="state.translation=this.value; saveState()"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Voice <select id="voiceSelect" onchange="setVoice(this.value)">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="${rate()}" oninput="this.nextElementSibling.textContent=rateLabel(this.value)" onchange="setRate(this.value)"><output class="rate-value">${rateLabel(rate())}</output></label></div></section>
     ${doneStripHtml(done)}
-    <section class="grid">${open.map(r => card(r.list, r.index)).join("")}</section>
+    <section class="grid${firstRender ? " intro" : ""}">${open.map(r => card(r.list, r.index)).join("")}</section>
     <section class="reader" id="reader"><div class="reader-head"><p class="eyebrow">${esc(currentTranslation)} chapter text</p><h2>${open.length === readings.length ? "Today’s ten chapters" : `${open.length} of ten left`}</h2></div>${open.length ? open.map(chapterPanel).join("") : `<div class="all-done"><p>All ten chapters read.</p><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button></div>`}</section>
     <section class="history"><h2>Recent completed days</h2>${state.history.length ? state.history.slice(0, 12).map(h => `<details><summary>Day ${h.day} · ${new Date(h.date).toLocaleDateString()}</summary><ol>${h.readings.map(r => `<li>${esc(r.ref)}</li>`).join("")}</ol></details>`).join("") : `<p>No completed days logged yet.</p>`}</section>
     ${audioPlayerHtml()}`;
+  firstRender = false;
   loadChapters(open);
 }
 function doneStripHtml(done) {
@@ -640,7 +660,7 @@ function card(list, i) {
   const current = list.chapters[state.positions[i]];
   const next = list.chapters[(state.positions[i] + 1) % list.chapters.length];
   const books = [...new Set(list.chapters.map(ch => ch.book))];
-  return `<article class="card" style="--delay:${i * 45}ms"><div class="num">List ${list.id}</div><div class="meter" style="--p:${pct(state.positions[i], list.chapters.length)}"><span>${pct(state.positions[i], list.chapters.length)}%</span></div><h2>${esc(refText(current))}</h2><p>${esc(list.name)} · ${list.chapters.length} days · next: ${esc(refText(next))}</p><div class="tools"><button onclick="move(${i},-1)">← Previous</button><button onclick="move(${i},1)">Next →</button><button onclick="scrollToChapter(${i})">Read</button><button onclick="speakChapter(${i})">Audio</button><button class="done-btn" onclick="setDone(${i}, true)">✓ Done</button></div><details><summary>Manual set</summary><div class="editrow"><select onchange="this.nextElementSibling.max=BOOKS[this.value]">${books.map(b => `<option ${b === current.book ? "selected" : ""}>${esc(b)}</option>`).join("")}</select><input type="number" min="1" max="${BOOKS[current.book]}" value="${current.chapter}"><button onclick="setReference(${i}, this.parentElement.children[0].value, this.parentElement.children[1].value)">Set</button></div></details></article>`;
+  return `<article class="card" style="--delay:${i * 45}ms"><div class="num">List ${list.id}</div><div class="meter" style="--p:${pct(state.positions[i], list.chapters.length)}"><span>${pct(state.positions[i], list.chapters.length)}%</span></div><h2>${esc(refText(current))}</h2><p>${esc(list.name)} · ${list.chapters.length} days · next: ${esc(refText(next))}</p><div class="tools"><button onclick="scrollToChapter(${i})">Read</button><button onclick="speakChapter(${i})">Audio</button><button class="done-btn" onclick="setDone(${i}, true)">✓ Done</button></div><details><summary>Adjust</summary><div class="tools nudge"><button onclick="move(${i},-1)">← Previous</button><button onclick="move(${i},1)">Next →</button></div><div class="editrow"><select onchange="this.nextElementSibling.max=BOOKS[this.value]">${books.map(b => `<option ${b === current.book ? "selected" : ""}>${esc(b)}</option>`).join("")}</select><input type="number" min="1" max="${BOOKS[current.book]}" value="${current.chapter}"><button onclick="setReference(${i}, this.parentElement.children[0].value, this.parentElement.children[1].value)">Set</button></div></details></article>`;
 }
 function chapterPanel(r) {
   return `<article class="chapter-panel" id="chapter-panel-${r.index}"><header><span>List ${r.list.id}</span><h3>${esc(refText(r.current))}</h3><em>${esc(r.list.name)}</em><button onclick="speakChapter(${r.index})">Play chapter</button><button class="done-btn" onclick="setDone(${r.index}, true)">✓ Mark done</button></header><div class="chapter-body" id="chapter-body-${r.index}"><p class="loading">Loading ${esc(refText(r.current))}…</p></div></article>`;
@@ -656,7 +676,7 @@ if (typeof module !== "undefined") {
   module.exports = {
     BOOKS, PLAN, START, positionsForDay, indexOfRef, parseRef,
     initialState, loadState, persistState, isDone, withDone,
-    voiceOptionsHtml, clampRate,
+    voiceOptionsHtml, clampRate, pickVoice,
     normalizeImportedChapter, normalizeVerses, parseProgressFile, parseBibleFile,
     loadKjvChapter
   };

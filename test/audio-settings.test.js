@@ -45,3 +45,27 @@ test("a fresh plan starts with no chosen voice and normal speed", () => {
   assert.strictEqual(state.voice, "");
   assert.strictEqual(state.rate, 1);
 });
+
+const { pickVoice } = require("../app.js");
+
+test("the default voice is English, not a Spanish voice that happens to say US", () => {
+  const list = [{ name: "Paulina", lang: "es-US" }, { name: "Samantha", lang: "en-US" }];
+  assert.strictEqual(pickVoice(list, "").name, "Samantha");
+});
+
+test("a saved voice wins over the English default", () => {
+  const list = [{ name: "Samantha", lang: "en-US" }, { name: "Thomas", lang: "fr-FR" }];
+  assert.strictEqual(pickVoice(list, "Thomas").name, "Thomas");
+});
+
+test("English voices are listed before every other language", () => {
+  const html = voiceOptionsHtml([
+    { name: "Thomas", lang: "fr-FR" },
+    { name: "Daniel", lang: "en-GB" },
+    { name: "Anna", lang: "de-DE" },
+    { name: "Samantha", lang: "en_US" }
+  ], "");
+  const names = [...html.matchAll(/value="([^"]+)"/g)].map(m => m[1]);
+  assert.deepStrictEqual(names.slice(0, 2).sort(), ["Daniel", "Samantha"]);
+  assert.strictEqual(names.length, 4);
+});
