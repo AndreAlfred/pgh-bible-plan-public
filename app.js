@@ -501,19 +501,28 @@ const isEnglish = v => /^en([-_]|$)/i.test(v.lang || "");
 const NOVELTY_VOICES = new Set(["Albert", "Bad News", "Bahh", "Bells", "Boing", "Bubbles", "Cellos",
   "Deranged", "Fred", "Good News", "Hysterical", "Jester", "Junior", "Kathy", "Organ", "Pipe Organ",
   "Princess", "Ralph", "Superstar", "Trinoids", "Whisper", "Wobble", "Zarvox"]);
-// iOS can also list one voice twice (e.g. compact and enhanced Samantha). The picker
-// stores the name, so a second same-named entry could never be selected anyway.
+// iOS lists a downloaded voice twice under one name (compact and enhanced Samantha).
+// Safari's voiceURI is Apple's identifier, e.g. com.apple.voice.enhanced.en-US.Samantha,
+// which is the only non-audible way to tell them apart. Chrome reports just the name.
+const TIERS = ["", "Compact", "Enhanced", "Premium"];
+const voiceTier = v => {
+  const m = /\.(compact|enhanced|premium)\./i.exec(v.voiceURI || "");
+  return m ? TIERS.findIndex(t => t.toLowerCase() === m[1].toLowerCase()) : 0;
+};
+// One entry per name+language, keeping the best tier; the picker stores only the
+// name, so that is also the copy speech uses.
 function usableVoices(list, savedName) {
-  const seen = new Set();
-  return list.filter(v => {
+  const best = new Map();
+  for (const v of list) {
+    if (v.name !== savedName && NOVELTY_VOICES.has(v.name)) continue;
     const key = `${v.name}|${v.lang}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return v.name === savedName || !NOVELTY_VOICES.has(v.name);
-  });
+    if (!best.has(key) || voiceTier(v) > voiceTier(best.get(key))) best.set(key, v);
+  }
+  return [...best.values()];
 }
 function pickVoice(list, savedName) {
-  return list.find(v => v.name === savedName) || usableVoices(list).find(isEnglish) || list[0];
+  const usable = usableVoices(list, savedName);
+  return usable.find(v => v.name === savedName) || usable.find(isEnglish) || list[0];
 }
 function selectedVoice() { return pickVoice(voices, state?.voice); }
 function clampRate(v) {
@@ -701,7 +710,7 @@ function voiceOptionsHtml(list, selectedName) {
   const usable = usableVoices(list, selectedName);
   const ordered = [...usable.filter(isEnglish), ...usable.filter(v => !isEnglish(v))];
   return ordered.map(v =>
-    `<option value="${esc(v.name)}"${v.name === selectedName ? " selected" : ""}>${esc(v.name)} · ${esc(v.lang)}</option>`
+    `<option value="${esc(v.name)}"${v.name === selectedName ? " selected" : ""}>${esc(v.name)} · ${esc(v.lang)}${voiceTier(v) ? ` · ${TIERS[voiceTier(v)]}` : ""}</option>`
   ).join("");
 }
 function voiceOptions() { return voiceOptionsHtml(voices, state?.voice); }

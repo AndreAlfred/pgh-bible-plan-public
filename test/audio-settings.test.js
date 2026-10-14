@@ -96,3 +96,25 @@ test("the default voice is never a novelty voice", () => {
   const list = [{ name: "Albert", lang: "en-US" }, { name: "Samantha", lang: "en-US" }];
   assert.strictEqual(pickVoice(list, "").name, "Samantha");
 });
+
+// iOS Safari reports Apple's identifier as voiceURI, which names the quality tier.
+const COMPACT = { name: "Samantha", lang: "en-US", voiceURI: "com.apple.voice.compact.en-US.Samantha" };
+const ENHANCED = { name: "Samantha", lang: "en-US", voiceURI: "com.apple.voice.enhanced.en-US.Samantha" };
+const PREMIUM = { name: "Ava", lang: "en-US", voiceURI: "com.apple.voice.premium.en-US.Ava" };
+
+test("when a voice is listed twice, the higher-quality copy is the one used", () => {
+  assert.strictEqual(pickVoice([COMPACT, ENHANCED], "Samantha").voiceURI, ENHANCED.voiceURI);
+  assert.strictEqual(pickVoice([COMPACT, ENHANCED], "").voiceURI, ENHANCED.voiceURI);
+});
+
+test("the picker labels each voice's quality tier when the device reports it", () => {
+  const html = voiceOptionsHtml([COMPACT, ENHANCED, PREMIUM, { name: "Daniel", lang: "en-GB", voiceURI: "Daniel" }], "");
+  assert.match(html, />Samantha · en-US · Enhanced</);
+  assert.doesNotMatch(html, /Compact/);
+  assert.match(html, />Ava · en-US · Premium</);
+  assert.match(html, />Daniel · en-GB</);
+});
+
+test("a compact voice with no better copy is labelled compact", () => {
+  assert.match(voiceOptionsHtml([COMPACT], ""), />Samantha · en-US · Compact</);
+});
