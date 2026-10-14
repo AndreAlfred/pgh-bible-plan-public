@@ -109,6 +109,53 @@ function withDone(st, i, done) {
   else delete marks[i];
   return { ...st, done: marks };
 }
+// Theme follows the device unless the user picked one. Picking the device's own
+// setting clears the override, so the toggle needs no third "auto" state. The
+// <head> script in index.html applies the same rule before first paint.
+const THEME_KEY = "pghBiblePlan.theme";
+function nextThemeOverride(shown, systemIsDark) {
+  const next = shown === "dark" ? "light" : "dark";
+  return next === (systemIsDark ? "dark" : "light") ? null : next;
+}
+const systemDark = () => typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches;
+let themeOverride = null;
+try { themeOverride = localStorage.getItem(THEME_KEY); } catch { /* storage denied: follow the device */ }
+const shownTheme = () => themeOverride || (systemDark() ? "dark" : "light");
+function applyTheme() {
+  const theme = shownTheme();
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#1b140e" : "#8d321d");
+}
+function toggleTheme() {
+  themeOverride = nextThemeOverride(shownTheme(), systemDark());
+  try {
+    if (themeOverride) localStorage.setItem(THEME_KEY, themeOverride);
+    else localStorage.removeItem(THEME_KEY);
+  } catch { /* the choice still holds for this visit */ }
+  applyTheme();
+  render();
+}
+function themeButtonHtml() {
+  const dark = shownTheme() === "dark";
+  const label = dark ? "Switch to light mode" : "Switch to dark mode";
+  return `<button class="theme-btn" onclick="toggleTheme()" aria-label="${label}" title="${label}">${dark ? "☀\uFE0E" : "☾"}</button>`;
+}
+
+// Chapter files for today plus the coming days, for the service worker to save
+// ahead of time so a trip without signal doesn't interrupt the plan.
+function upcomingSlugs(st, days) {
+  const slugs = new Set();
+  for (let d = 0; d < days; d++) {
+    PLAN.forEach((list, i) => slugs.add(slug(list.chapters[(st.positions[i] + d) % list.chapters.length])));
+  }
+  return [...slugs];
+}
+function prefetchUpcoming() {
+  navigator.serviceWorker?.ready.then(reg => {
+    reg.active?.postMessage({ type: "prefetch", urls: upcomingSlugs(state, 8).map(s => `/data/kjv/${s}.json`) });
+  }).catch(() => { /* offline support is a bonus, never an error */ });
+}
+
 function setDone(i, done) {
   state = withDone(state, i, done);
   saveState();
@@ -153,6 +200,7 @@ function completeDay() {
   stopAudio();
   saveState();
   offerUndo(before, `Day ${before.day} complete — on to Day ${state.day}.`);
+  prefetchUpcoming();
 }
 function setReference(i, book, chapter) {
   state.positions[i] = indexOfRef(PLAN[i], { book, chapter: Number(chapter) });
@@ -302,8 +350,12 @@ async function loadChapters(readings) {
     try {
       const chapter = await getChapter(r.current);
       if (token === renderToken) el.innerHTML = verseHtml(chapter);
-    } catch {
-      if (token === renderToken) el.innerHTML = `<p class="missing">No text loaded for ${esc(refText(r.current))}. Use KJV or import a local Bible file.</p>`;
+    } catch (err) {
+      // fetch() rejects with a TypeError when the network is unreachable; a missing
+      // file is our own Error. navigator.onLine alone misses dead Wi-Fi.
+      if (token === renderToken) el.innerHTML = err instanceof TypeError || navigator.onLine === false
+        ? `<p class="missing">${esc(refText(r.current))} isn't saved for offline reading yet. It will load once you're back online.</p>`
+        : `<p class="missing">No text loaded for ${esc(refText(r.current))}. Use KJV or import a local Bible file.</p>`;
     }
   }));
 }
@@ -700,7 +752,7 @@ function render() {
   $("#app").innerHTML = `
     <section class="hero"><div class="seal">PGH</div><div><p class="eyebrow">Unofficial reading-plan tool</p><h1>Professor Grant Horner Bible Reading Plan</h1><p class="sub">Ten rotating chapter lists, local progress, KJV text, optional bring-your-own Bible import, and browser read-aloud.</p></div><div class="hero-side"><button class="dayplate" onclick="setDay()" aria-label="Current day ${state.day}. Change day"><span>Current day</span><strong>${state.day}</strong><em>tap to edit</em></button><div class="hero-buttons"><button class="hero-btn read" onclick="scrollToReader()">Read</button><button class="hero-btn listen" onclick="speakAll()">Listen</button></div></div></section>
     <section class="notice"><strong>Unofficial.</strong> Not affiliated with or endorsed by Professor Grant Horner, The Lockman Foundation, or any Bible publisher. Included text is KJV; imported Bible files stay in your browser.</section>
-    <section class="actions"><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button><button onclick="copyReadings()">Copy readings</button><button onclick="exportData()">Export</button><label class="button">Import progress <input type="file" accept="application/json" onchange="importData(this.files[0])"></label><button onclick="resetPlan()">Reset</button></section>
+    <section class="actions"><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button><button onclick="copyReadings()">Copy readings</button><button onclick="exportData()">Export</button><label class="button">Import progress <input type="file" accept="application/json" onchange="importData(this.files[0])"></label><button onclick="resetPlan()">Reset</button>${themeButtonHtml()}</section>
     <section class="settings"><div><label>Translation <select onchange="state.translation=this.value; saveState()"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Voice <select id="voiceSelect" onchange="setVoice(this.value)">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="${rate()}" oninput="this.nextElementSibling.textContent=rateLabel(this.value)" onchange="setRate(this.value)"><output class="rate-value">${rateLabel(rate())}</output></label></div></section>
     ${doneStripHtml(done)}
     <section class="grid${firstRender ? " intro" : ""}">${open.map(r => card(r.list, r.index)).join("")}</section>
@@ -728,12 +780,24 @@ function chapterPanel(r) {
 // CommonJS module under `node --test`, which only pulls out the pure helpers.
 if (typeof document !== "undefined") {
   state = loadState();
+  applyTheme();
   render();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
+    if (themeOverride) return;
+    applyTheme();
+    render();
+  });
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").then(prefetchUpcoming, () => { /* unsupported here */ });
+  }
+  addEventListener("offline", () => toast("You're offline. Chapters you've opened, plus the next week's, are still here."));
+  addEventListener("online", () => toast("Back online."));
 }
 if (typeof module !== "undefined") {
   module.exports = {
     BOOKS, PLAN, START, positionsForDay, indexOfRef, parseRef,
     initialState, loadState, persistState, isDone, withDone, advanceDay,
+    nextThemeOverride, upcomingSlugs,
     voiceOptionsHtml, clampRate, pickVoice,
     normalizeImportedChapter, normalizeVerses, parseProgressFile, parseBibleFile,
     loadKjvChapter

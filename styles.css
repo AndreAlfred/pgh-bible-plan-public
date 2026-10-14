@@ -50,3 +50,46 @@
 /* Phase 2: compact phone header, notices */
 @media(max-width:620px){.hero{grid-template-columns:auto 1fr;gap:10px 14px;padding:16px}.seal{width:48px;height:48px;font-size:.7rem;box-shadow:inset 0 0 0 4px rgba(255,243,215,.55),0 8px 16px rgba(141,50,29,.22)}.hero .eyebrow{font-size:.6rem;letter-spacing:.14em}.hero h1{font-size:1.8rem;line-height:.95;margin:3px 0 0;letter-spacing:-.045em}.hero .sub{display:none}.hero-side{grid-column:1/-1;grid-template-columns:auto 1fr;align-items:stretch}.hero-side .dayplate{padding:8px 16px;border-radius:18px}.dayplate strong{font-size:2rem}.dayplate em{font-size:.58rem}.hero-btn{padding:12px 8px}.notice{font-size:.86rem;padding:10px 14px;border-radius:16px}}
 .toast{position:fixed;left:50%;top:14px;z-index:50;display:flex;gap:10px;align-items:center;width:max-content;max-width:min(560px,calc(100% - 24px));padding:8px 8px 8px 18px;border-radius:18px;background:var(--ink);color:var(--vellum);box-shadow:0 18px 50px rgba(36,24,15,.35);line-height:1.35;transform:translate(-50%,calc(-100% - 20px));opacity:0;transition:transform .3s ease,opacity .3s ease;pointer-events:none}.toast.is-shown{transform:translate(-50%,0);opacity:1;pointer-events:auto}.toast.is-error{background:var(--rust)}.toast span{flex:1}.toast button{padding:7px 14px;background:var(--gold);color:var(--ink);border-color:transparent;box-shadow:none}.toast button:hover{background:#c28f3f}.toast .toast-close{background:transparent;color:var(--vellum);padding:4px 10px;font-size:1.25rem;line-height:1}.toast .toast-close:hover{background:rgba(255,248,234,.14)}@media(prefers-reduced-motion:reduce){.toast{transition:opacity .2s}}
+
+/* Phase 3: theme toggle */
+.theme-btn{margin-left:auto;width:44px;height:44px;min-width:44px;padding:0;display:grid;place-items:center;font-size:1.15rem;line-height:1}
+
+/* Dark mode: candlelit study. Walnut ground, parchment text, ember and gold.
+   --ink and --vellum swap roles, so ink-on-vellum pieces (day plate, toast,
+   audio tab) invert on their own; the overrides below cover hard-coded colors. */
+:root[data-theme=dark]{color-scheme:dark;--ink:#efe2c6;--muted:#b9a284;--vellum:#1b140e;--gold:#d8a854;--rust:#e2825f;--green:#3f7259;--line:rgba(239,226,198,.13);--shadow:0 24px 70px rgba(0,0,0,.5);--panel:rgba(31,23,16,.88)}
+[data-theme=dark] body{background:radial-gradient(circle at 18% 0%,rgba(216,168,84,.16) 0 14%,transparent 42%),radial-gradient(circle at 88% 6%,rgba(226,130,95,.11) 0 10%,transparent 32%),linear-gradient(135deg,#120d09,#1e160f 45%,#0e0a07);background-attachment:fixed}
+[data-theme=dark] body:before{opacity:.5;background-image:linear-gradient(90deg,rgba(239,226,198,.028) 1px,transparent 1px),linear-gradient(rgba(239,226,198,.024) 1px,transparent 1px)}
+[data-theme=dark] .hero{background:linear-gradient(135deg,rgba(46,34,23,.94),rgba(26,19,13,.9))}
+[data-theme=dark] .seal{background:#9c3a20}
+[data-theme=dark] .notice,[data-theme=dark] .settings,[data-theme=dark] .chapter-panel header,[data-theme=dark] .settings>.import-help{background:var(--panel)}
+[data-theme=dark] button,[data-theme=dark] .button{background:rgba(54,41,28,.9);border-color:rgba(239,226,198,.16);box-shadow:0 8px 20px rgba(0,0,0,.28)}
+[data-theme=dark] button:hover,[data-theme=dark] .button:hover{background:#3d2e20}
+[data-theme=dark] select,[data-theme=dark] input[type=number]{background:#241b13}
+[data-theme=dark] input[type=range]{background:transparent}
+[data-theme=dark] .card{background:linear-gradient(160deg,rgba(46,35,24,.94),rgba(29,21,14,.9));box-shadow:0 18px 45px rgba(0,0,0,.38)}
+[data-theme=dark] .card:before{background:rgba(216,168,84,.07)}
+[data-theme=dark] .meter{background:conic-gradient(var(--gold) calc(var(--p)*1%),rgba(239,226,198,.1) 0)}
+[data-theme=dark] .reader{background:linear-gradient(180deg,rgba(34,26,18,.97),rgba(23,17,11,.94));border-color:var(--line)}
+[data-theme=dark] .verse sup{background:rgba(216,168,84,.15)}
+[data-theme=dark] .history{background:rgba(0,0,0,.22)}
+[data-theme=dark] .dayplate{box-shadow:0 18px 36px rgba(0,0,0,.45)}
+[data-theme=dark] .dayplate span,[data-theme=dark] .dayplate em{color:#6b5640}
+[data-theme=dark] .primary,[data-theme=dark] .hero-btn.read,[data-theme=dark] .done-btn{background:var(--green)}
+[data-theme=dark] .hero-btn.read:hover,[data-theme=dark] .done-btn:hover,[data-theme=dark] .primary:hover{background:#4a8467}
+[data-theme=dark] .hero-btn.listen,[data-theme=dark] .toast button{background:var(--gold);color:#1b140e}
+[data-theme=dark] .hero-btn.listen:hover,[data-theme=dark] .toast button:hover{background:#e4b866}
+[data-theme=dark] .toast .toast-close{background:transparent;color:#1b140e}
+[data-theme=dark] .toast .toast-close:hover{background:rgba(27,20,14,.1)}
+[data-theme=dark] .audio-shell{color:#efe2c6;background:linear-gradient(135deg,rgba(24,17,11,.97),rgba(28,50,39,.97));border-color:var(--line)}
+[data-theme=dark] .audio-topline button,[data-theme=dark] .audio-controls button{color:#efe2c6;background:rgba(239,226,198,.08)}
+[data-theme=dark] .audio-controls .audio-primary{background:var(--gold);color:#1b140e}
+[data-theme=dark] .import-help pre{background:#0e0a07;color:#efe2c6}
+[data-theme=dark] .done-strip{background:rgba(63,114,89,.14);border-color:rgba(143,194,166,.32)}
+[data-theme=dark] .done-strip span,[data-theme=dark] .done-strip i{color:#8fc2a6}
+[data-theme=dark] .done-strip s{text-decoration-color:#8fc2a6}
+/* Buttons styled as ink plates. The generic dark button rule outranks plain class
+   selectors, so these restate their ink background. */
+[data-theme=dark] .dayplate,[data-theme=dark] .dayplate:hover,[data-theme=dark] .audio-tab,[data-theme=dark] .audio-tab:hover{background:var(--ink);color:var(--vellum)}
+.primary:hover{background:#31543f}
+input[type=range]{accent-color:var(--rust)}

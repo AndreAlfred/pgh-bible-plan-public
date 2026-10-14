@@ -11,6 +11,9 @@ Unofficial public-facing reading-plan tracker for the Professor Grant Horner Bib
 - Bring-your-own Bible JSON import stored locally in browser IndexedDB
 - Browser read-aloud controls for one chapter or all ten readings
 - Export/import progress backup
+- Mark chapters done to hide them; Undo after Complete Day, Reset or import
+- Dark mode that follows the device, with a sun/moon override
+- Works offline: chapters you open, plus the coming week's, are saved on the device
 
 ## Copyright posture
 
@@ -57,6 +60,18 @@ There is deliberately no `package.json`: Vercel changes its build behaviour when
 one, and this project wants to stay a plain static deploy.
 
 Covered: the ten-list rotation and day maths, progress-file and Bible-file parsing,
-voice/speed persistence, and the chapter fetch cache. Not covered: anything touching the
-DOM, which is still verified by hand in a browser.
+saved-state repair, voice/speed persistence, the chapter fetch cache, done marks,
+Complete Day and its undo snapshot, the theme toggle rule, and the offline prefetch list.
+Not covered: anything touching the DOM, which is still verified by hand in a browser.
+
+### Offline (`sw.js`)
+
+The service worker is network-first for the app itself (page, `app.js`, `styles.css`),
+so a deploy reaches phones on their next online load — the cache is only the offline
+fallback. KJV chapter files never change, so they are cache-first. `vercel.json` serves
+`sw.js` with `no-cache` so browsers always see a new version of it.
+
+Bump `VERSION` in `sw.js` only if the cache layout changes (names or strategy); it is
+not needed for ordinary releases. To test offline locally, load the site twice (the
+second load is the first one the worker controls), then stop the server and reload.
 
