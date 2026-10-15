@@ -496,11 +496,14 @@ if (typeof window !== "undefined" && "speechSynthesis" in window) {
 // Match on the language prefix: a looser /us/ test also matched es-US (Spanish).
 const isEnglish = v => /^en([-_]|$)/i.test(v.lang || "");
 // Apple ships joke voices (Bubbles, Cellos…) and robotic 1980s MacInTalk voices
-// tagged en-US alongside the real ones. Matched by name, since their voiceURIs
-// differ between macOS and iOS. A voice someone already chose is never hidden.
+// tagged en-US alongside the real ones, plus the robotic Eloquence voices listed as
+// "Eddy (English (United States))". Matched by name, since their voiceURIs differ
+// between macOS and iOS. A voice someone already chose is never hidden.
 const NOVELTY_VOICES = new Set(["Albert", "Bad News", "Bahh", "Bells", "Boing", "Bubbles", "Cellos",
   "Deranged", "Fred", "Good News", "Hysterical", "Jester", "Junior", "Kathy", "Organ", "Pipe Organ",
-  "Princess", "Ralph", "Superstar", "Trinoids", "Whisper", "Wobble", "Zarvox"]);
+  "Princess", "Ralph", "Superstar", "Trinoids", "Whisper", "Wobble", "Zarvox",
+  "Eddy", "Flo", "Grandma", "Grandpa", "Reed", "Rocko", "Sandy", "Shelley"]);
+const isNovelty = v => NOVELTY_VOICES.has(v.name.replace(/ \(.*\)$/, ""));
 // iOS lists a downloaded voice twice under one name (compact and enhanced Samantha).
 // Safari's voiceURI is Apple's identifier, e.g. com.apple.voice.enhanced.en-US.Samantha,
 // which is the only non-audible way to tell them apart. Chrome reports just the name.
@@ -514,16 +517,27 @@ const voiceTier = v => {
 function usableVoices(list, savedName) {
   const best = new Map();
   for (const v of list) {
-    if (v.name !== savedName && NOVELTY_VOICES.has(v.name)) continue;
+    if (v.name !== savedName && isNovelty(v)) continue;
     const key = `${v.name}|${v.lang}`;
     if (!best.has(key) || voiceTier(v) > voiceTier(best.get(key))) best.set(key, v);
   }
-  return [...best.values()];
+  // Best tier first; sort is stable, so the device's own order holds within a tier.
+  return [...best.values()].sort((a, b) => voiceTier(b) - voiceTier(a));
 }
+// iOS Safari hides Enhanced and Premium voices from getVoices() (an iPhone with
+// Samantha Enhanced and Ava Premium installed listed only compact Samantha). An
+// utterance with no voice set uses the device's default English voice instead, which
+// may be one of those, so "Device default" leaves the voice unset.
+const DEVICE_VOICE = "__device__";
 function pickVoice(list, savedName) {
+  if (savedName === DEVICE_VOICE) return null;
   const usable = usableVoices(list, savedName);
   return usable.find(v => v.name === savedName) || usable.find(isEnglish) || list[0];
 }
+// The readings are English, so offer English voices plus the device's own language
+// (for someone reading an imported Bible in it). Apple ships 100+ voices otherwise.
+const deviceLanguages = () => typeof navigator !== "undefined" ? [...(navigator.languages || [navigator.language])] : [];
+const langPrefix = lang => String(lang || "").toLowerCase().split(/[-_]/)[0];
 function selectedVoice() { return pickVoice(voices, state?.voice); }
 function clampRate(v) {
   const n = Number(v);
@@ -618,6 +632,7 @@ function speakCurrent() {
   const u = new SpeechSynthesisUtterance(item.text);
   const v = selectedVoice();
   if (v) u.voice = v;
+  else u.lang = deviceLanguages().find(l => /^en([-_]|$)/i.test(l)) || "en-US";
   u.rate = rate();
   u.onend = () => {
     if (myGen !== audio.gen) return;
@@ -704,12 +719,15 @@ function renderVoiceSelectOnly() {
   const el = document.getElementById("voiceSelect");
   if (el) el.innerHTML = voiceOptions();
 }
-function voiceOptionsHtml(list, selectedName) {
+function voiceOptionsHtml(list, selectedName, langs = deviceLanguages()) {
   if (!list.length) return `<option value="">No voices found yet</option>`;
-  // Apple devices ship 100+ voices; put English first rather than burying it.
+  const own = new Set(langs.map(langPrefix));
   const usable = usableVoices(list, selectedName);
-  const ordered = [...usable.filter(isEnglish), ...usable.filter(v => !isEnglish(v))];
-  return ordered.map(v =>
+  const others = usable.filter(v => !isEnglish(v) && (own.has(langPrefix(v.lang)) || v.name === selectedName));
+  const filtered = [...usable.filter(isEnglish), ...others];
+  const ordered = filtered.length ? filtered : usable;
+  const device = `<option value="${DEVICE_VOICE}"${selectedName === DEVICE_VOICE ? " selected" : ""}>Device default (set in Settings)</option>`;
+  return device + ordered.map(v =>
     `<option value="${esc(v.name)}"${v.name === selectedName ? " selected" : ""}>${esc(v.name)} · ${esc(v.lang)}${voiceTier(v) ? ` · ${TIERS[voiceTier(v)]}` : ""}</option>`
   ).join("");
 }

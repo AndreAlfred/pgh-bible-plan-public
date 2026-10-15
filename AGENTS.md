@@ -61,9 +61,18 @@ Bible format; this file covers the traps, the reasons behind decisions, and how 
   `en-US`). Match English with `/^en/` — a looser `/us/` matched `es-US`.
 - iOS lists downloaded voices twice under one name (e.g. compact and enhanced Samantha).
   We keep the best tier, read from `voiceURI` (`com.apple.voice.{compact|enhanced|premium}.…`)
-  and show it in the menu. **Unconfirmed on a device:** that iOS Safari exposes those
-  identifiers. If no tier label appears on the phone, it doesn't, and the duplicate
-  can only be told apart by ear. Chrome on macOS reports only the bare name.
+  and show it in the menu, best tier first. **Confirmed on an iPhone** (Oct 2026): Safari
+  exposes these identifiers ("Samantha · en-US · Compact" showed). Some voices (Daniel,
+  Karen…) showed no tier, so not every iOS voiceURI follows that pattern. Chrome on
+  macOS reports only the bare name.
+- The menu offers English voices plus the device's own language (`navigator.languages`),
+  so someone reading an imported non-English Bible still gets a voice. Apple's
+  Eloquence voices ("Eddy (English (United States))") are hidden with the novelty ones.
+- **iOS Safari hides Enhanced and Premium voices** from `getVoices()`. Andrew's iPhone had
+  Samantha Enhanced and Ava Premium installed, but only compact Samantha was listed.
+  Siri voices are never exposed either. The "Device default" option (`DEVICE_VOICE`)
+  leaves `utterance.voice` unset, so the phone uses its default English voice from
+  Settings, which may be one of the hidden ones. Not yet confirmed that it is.
 
 ## Copyright and deploys
 

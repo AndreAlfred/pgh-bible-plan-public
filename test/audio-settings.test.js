@@ -58,16 +58,25 @@ test("a saved voice wins over the English default", () => {
   assert.strictEqual(pickVoice(list, "Thomas").name, "Thomas");
 });
 
-test("English voices are listed before every other language", () => {
-  const html = voiceOptionsHtml([
-    { name: "Thomas", lang: "fr-FR" },
-    { name: "Daniel", lang: "en-GB" },
-    { name: "Anna", lang: "de-DE" },
-    { name: "Samantha", lang: "en_US" }
-  ], "");
-  const names = [...html.matchAll(/value="([^"]+)"/g)].map(m => m[1]);
-  assert.deepStrictEqual(names.slice(0, 2).sort(), ["Daniel", "Samantha"]);
-  assert.strictEqual(names.length, 4);
+const WORLD = [
+  { name: "Thomas", lang: "fr-FR" },
+  { name: "Daniel", lang: "en-GB" },
+  { name: "Anna", lang: "de-DE" },
+  { name: "Samantha", lang: "en_US" }
+];
+
+test("only English voices are offered on an English-language device", () => {
+  const names = [...voiceOptionsHtml(WORLD, "", ["en-US"]).matchAll(/value="([^"]+)"/g)].map(m => m[1]).filter(n => n !== "__device__");
+  assert.deepStrictEqual(names.sort(), ["Daniel", "Samantha"]);
+});
+
+test("the device's own language is offered too, after English", () => {
+  const names = [...voiceOptionsHtml(WORLD, "", ["fr-FR", "en-US"]).matchAll(/value="([^"]+)"/g)].map(m => m[1]).filter(n => n !== "__device__");
+  assert.deepStrictEqual(names, ["Daniel", "Samantha", "Thomas"]);
+});
+
+test("a saved voice in another language stays selectable", () => {
+  assert.match(voiceOptionsHtml(WORLD, "Anna", ["en-US"]), /<option value="Anna" selected>/);
 });
 
 // Real iOS list: Apple ships joke and 1980s MacInTalk voices tagged en-US.
@@ -77,7 +86,7 @@ const IOS = [
   { name: "Cellos", lang: "en-US" }, { name: "Fred", lang: "en-US" },
   { name: "Daniel", lang: "en-GB" }
 ];
-const optionNames = html => [...html.matchAll(/value="([^"]+)"/g)].map(m => m[1]);
+const optionNames = html => [...html.matchAll(/value="([^"]+)"/g)].map(m => m[1]).filter(n => n !== "__device__");
 
 test("novelty voices are left out of the picker", () => {
   const names = optionNames(voiceOptionsHtml(IOS, ""));
@@ -117,4 +126,33 @@ test("the picker labels each voice's quality tier when the device reports it", (
 
 test("a compact voice with no better copy is labelled compact", () => {
   assert.match(voiceOptionsHtml([COMPACT], ""), />Samantha · en-US · Compact</);
+});
+
+test("the best-quality voices are listed first", () => {
+  const html = voiceOptionsHtml([{ name: "Daniel", lang: "en-GB", voiceURI: "Daniel" }, COMPACT, PREMIUM], "", ["en-US"]);
+  assert.deepStrictEqual(optionNames(html), ["Ava", "Samantha", "Daniel"]);
+});
+
+test("with no saved voice, the best-quality English voice is the default", () => {
+  assert.strictEqual(pickVoice([COMPACT, PREMIUM], "").name, "Ava");
+});
+
+test("Apple's robotic Eloquence voices are left out, in either naming", () => {
+  const names = optionNames(voiceOptionsHtml([
+    { name: "Eddy (English (United States))", lang: "en-US" }, { name: "Grandma", lang: "en-GB" },
+    { name: "Samantha", lang: "en-US" }
+  ], "", ["en-US"]));
+  assert.deepStrictEqual(names, ["Samantha"]);
+});
+
+// iOS Safari hides Premium voices from the list, so "Device default" leaves the
+// utterance's voice unset and lets the phone use its own default English voice.
+test("choosing the device default sets no voice", () => {
+  assert.strictEqual(pickVoice([COMPACT, PREMIUM], "__device__"), null);
+});
+
+test("the device default is offered first and stays selected", () => {
+  const html = voiceOptionsHtml([COMPACT], "__device__", ["en-US"]);
+  assert.match(html, /^<option value="__device__" selected>Device default/);
+  assert.doesNotMatch(html, /value="Samantha" selected/);
 });
