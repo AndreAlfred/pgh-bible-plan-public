@@ -34,7 +34,9 @@ Bible format; this file covers the traps, the reasons behind decisions, and how 
 
 - **Done marks** are stamped `"day:position"` per list. They lapse automatically when
   the list moves or the day changes. The day is in the stamp because short lists wrap
-  (Proverbs is back on chapter 1 at day 32).
+  (Proverbs is back on chapter 1 at day 32). The chapter's Done button sits at the end
+  of the passage; `finishChapter` then jumps to the next chapter's start, waiting on
+  `chaptersReady` because loading text changes the heights above it.
 - **Undo** (Complete Day, Reset, Import progress) restores a snapshot of the previous
   state object. `advanceDay` must therefore return a new object and never mutate its
   input (tested). Undo is refused if `state` changed since, so it can't discard a later edit.
@@ -72,7 +74,10 @@ Bible format; this file covers the traps, the reasons behind decisions, and how 
   Samantha Enhanced and Ava Premium installed, but only compact Samantha was listed.
   Siri voices are never exposed either. The "Device default" option (`DEVICE_VOICE`)
   leaves `utterance.voice` unset, so the phone uses its default English voice from
-  Settings, which may be one of the hidden ones. Not yet confirmed that it is.
+  Settings, which may be one of the hidden ones. **Tested on the iPhone: it isn't.** With
+  Ava Premium set as the Spoken Content voice, Device default still spoke compact
+  Samantha. Chrome on iOS uses the same WebKit engine, so it has the same limit. Web
+  pages on iOS cannot reach Enhanced or Premium voices at all.
 
 ## Copyright and deploys
 

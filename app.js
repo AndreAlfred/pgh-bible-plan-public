@@ -39,6 +39,8 @@ let state = null;
 let currentTranslation = "KJV";
 let renderToken = 0;
 let firstRender = true;
+// Settles once the chapters drawn by the latest render have their text.
+let chaptersReady = Promise.resolve();
 let voices = [];
 let audio = {
   items: [],
@@ -159,6 +161,14 @@ function prefetchUpcoming() {
 function setDone(i, done) {
   state = withDone(state, i, done);
   saveState();
+}
+// Done at the end of a passage removes it, which would leave the reader partway into
+// the next chapter. Jump to that chapter's start once its text (and the text above
+// it) has loaded, since loading changes the heights.
+function finishChapter(i) {
+  const next = document.getElementById(`chapter-panel-${i}`)?.nextElementSibling?.id || "reader";
+  setDone(i, true);
+  chaptersReady.then(() => document.getElementById(next)?.scrollIntoView({ behavior: "instant", block: "start" }));
 }
 
 function move(i, delta) {
@@ -805,7 +815,7 @@ function render() {
     <section class="history"><h2>Recent completed days</h2>${state.history.length ? state.history.slice(0, 12).map(h => `<details><summary>Day ${h.day} · ${new Date(h.date).toLocaleDateString()}</summary><ol>${h.readings.map(r => `<li>${esc(r.ref)}</li>`).join("")}</ol></details>`).join("") : `<p>No completed days logged yet.</p>`}</section>
     ${audioPlayerHtml()}`;
   firstRender = false;
-  loadChapters(open);
+  chaptersReady = loadChapters(open);
 }
 function doneStripHtml(done) {
   if (!done.length) return "";
@@ -818,7 +828,7 @@ function card(list, i) {
   return `<article class="card" style="--delay:${i * 45}ms"><div class="num">List ${list.id}</div><div class="meter" style="--p:${pct(state.positions[i], list.chapters.length)}"><span>${pct(state.positions[i], list.chapters.length)}%</span></div><h2>${esc(refText(current))}</h2><p>${esc(list.name)} · ${list.chapters.length} days · next: ${esc(refText(next))}</p><div class="tools"><button onclick="scrollToChapter(${i})">Read</button><button onclick="speakChapter(${i})">Audio</button><button class="done-btn" onclick="setDone(${i}, true)">✓ Done</button></div><details><summary>Adjust</summary><div class="tools nudge"><button onclick="move(${i},-1)">← Previous</button><button onclick="move(${i},1)">Next →</button></div><div class="editrow"><select onchange="this.nextElementSibling.max=BOOKS[this.value]">${books.map(b => `<option ${b === current.book ? "selected" : ""}>${esc(b)}</option>`).join("")}</select><input type="number" min="1" max="${BOOKS[current.book]}" value="${current.chapter}"><button onclick="setReference(${i}, this.parentElement.children[0].value, this.parentElement.children[1].value)">Set</button></div></details></article>`;
 }
 function chapterPanel(r) {
-  return `<article class="chapter-panel" id="chapter-panel-${r.index}"><header><span>List ${r.list.id}</span><h3>${esc(refText(r.current))}</h3><em>${esc(r.list.name)}</em><button onclick="speakChapter(${r.index})">Play chapter</button><button class="done-btn" onclick="setDone(${r.index}, true)">✓ Mark done</button></header><div class="chapter-body" id="chapter-body-${r.index}"><p class="loading">Loading ${esc(refText(r.current))}…</p></div></article>`;
+  return `<article class="chapter-panel" id="chapter-panel-${r.index}"><header><span>List ${r.list.id}</span><h3>${esc(refText(r.current))}</h3><em>${esc(r.list.name)}</em><button onclick="speakChapter(${r.index})">Play chapter</button></header><div class="chapter-main"><div class="chapter-body" id="chapter-body-${r.index}"><p class="loading">Loading ${esc(refText(r.current))}…</p></div><footer class="chapter-end"><button class="done-btn" onclick="finishChapter(${r.index})">✓ Done with ${esc(refText(r.current))}</button></footer></div></article>`;
 }
 
 // Loaded two ways: as a browser <script>, where it renders on load, and as a
