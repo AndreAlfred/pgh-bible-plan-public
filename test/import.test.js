@@ -83,3 +83,16 @@ test("every imported chapter is tagged with the translation it came from", () =>
   const { chapters } = parseBibleFile({ translation: "NASB", chapters: { "Genesis 1": [{ v: 1, t: "a" }] } }, "x");
   assert.strictEqual(chapters[0].chapter.translation, "NASB");
 });
+
+test("blank verses a translation omits are dropped, keeping the other numbers", () => {
+  const { chapters } = parseBibleFile({
+    translation: "ESV",
+    chapters: { "Acts 28": [{ v: 28, t: "they will listen." }, { v: 39, t: "" }, { v: 30, t: "He lived there" }] }
+  }, "esv.json");
+  assert.deepStrictEqual(chapters[0].chapter.verses.map(v => v.v), [28, 30]);
+});
+
+test("a plain string list keeps its numbering gap when a blank verse is dropped", () => {
+  const { chapters } = parseBibleFile({ chapters: { "John 5": ["one", "two", "three", " ", "five"] } }, "x.json");
+  assert.deepStrictEqual(chapters[0].chapter.verses.map(v => v.v), [1, 2, 3, 5]);
+});

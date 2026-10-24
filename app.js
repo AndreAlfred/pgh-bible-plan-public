@@ -345,7 +345,8 @@ function loadKjvChapter(slugName) {
 async function getChapter(ch) {
   if (state.translation && state.translation !== "KJV") {
     const imported = await dbGet(`${state.translation}:${refText(ch)}`);
-    if (imported) return imported;
+    // Bibles imported before blank verses were dropped still have them stored.
+    if (imported) return { ...imported, verses: withoutBlankVerses(imported.verses) };
   }
   return loadKjvChapter(slug(ch));
 }
@@ -379,7 +380,14 @@ function normalizeImportedChapter(raw) {
 function normalizeVerses(val) {
   const list = Array.isArray(val) ? val : val?.verses;
   if (!Array.isArray(list)) return null;
-  return list.map((x, i) => (typeof x === "string" ? { v: i + 1, t: x } : x));
+  return withoutBlankVerses(list.map((x, i) => (typeof x === "string" ? { v: i + 1, t: x } : x)));
+}
+// Modern translations omit verses the oldest manuscripts lack (Acts 28:29, John 5:4…),
+// and some exported files keep them as empty entries. Printed Bibles skip the number,
+// and an empty utterance can stall speech, so drop them. Numbering happens first, so a
+// plain string list keeps its gap.
+function withoutBlankVerses(verses) {
+  return verses.filter(x => x && typeof x.t === "string" && x.t.trim());
 }
 
 // Both import paths used to parse inline, so a bad file threw into a FileReader
@@ -854,7 +862,7 @@ if (typeof module !== "undefined") {
     initialState, loadState, persistState, isDone, withDone, advanceDay,
     nextThemeOverride, upcomingSlugs,
     voiceOptionsHtml, clampRate, pickVoice,
-    normalizeImportedChapter, normalizeVerses, parseProgressFile, parseBibleFile,
+    normalizeImportedChapter, normalizeVerses, withoutBlankVerses, parseProgressFile, parseBibleFile,
     loadKjvChapter
   };
 }
