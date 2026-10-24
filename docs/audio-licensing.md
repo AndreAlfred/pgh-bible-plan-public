@@ -112,6 +112,53 @@ A licensed API is the primary path, not the backup. The two worth asking:
 
 ---
 
+## ESV API (Crossway) — checked 2026-10-24
+
+Not a permission request: a non-commercial site can sign up and get a key itself at
+<https://api.esv.org/account/create-application/>. `GET /v3/passage/audio/?q=Acts+28`
+with `Authorization: Token …` redirects to an MP3, one chapter per request.
+
+Terms that shape the build (<https://api.esv.org/>):
+
+- **The key may not be published.** This is a static site in a public repo, so the
+  key cannot live in `app.js`. It needs a small proxy (a Vercel function under `api/`,
+  key in a Vercel env var) that adds the header and returns the redirect.
+- At most **500 verses cached or stored**, or half a book, whichever is less. A day's
+  ten chapters fit, but the week-ahead offline prefetch would not. It is unclear whether
+  the cap counts audio, which is what the email below asks.
+- 5,000 queries/day, 1,000/hour, 60/minute, per key, shared by every reader.
+- Each page must show the ESV copyright notice and link to www.esv.org.
+- Formal licences go to organizations only, not solo developers, via
+  <https://crosswaygnp.formstack.com/forms/esv_digital_licensing_proposal>. Crossway
+  can revoke access at any time.
+
+### Email 3 — Crossway (optional, only to settle the caching question)
+
+No published address for questions; licensing@crossway.org is listed for ending access.
+
+**Subject:** ESV API audio — caching for offline listening in a non-commercial app
+
+> Hello,
+>
+> I run a free, non-commercial web app for the Professor Grant Horner Bible Reading
+> Plan: ten chapters a day across ten lists, no accounts, ads, or donations. I'd like to
+> use the ESV API's passage audio endpoint for chapter read-aloud, with the API key held
+> server-side so it is never exposed.
+>
+> Two questions about the terms before I build:
+>
+> 1. Does the 500-verse caching limit apply to audio? A reader's own device would keep
+>    about a day's chapters (usually 150–350 verses) so listening works without signal.
+> 2. Is it acceptable to play the MP3 in a browser `<audio>` element with lock-screen
+>    controls, alongside the copyright notice and esv.org link on the page?
+>
+> The app's source is public; the ESV text and audio would not be included in it.
+>
+> Thank you for making the API available,
+> Andrew Trimble
+
+---
+
 ## If a key is granted
 
 Design agreed on 2026-08-01, unbuilt as of this writing:
