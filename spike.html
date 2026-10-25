@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Spike: ESV audio with the screen locked</title>
+<style>
+  :root{--ink:#24180f;--muted:#765d45;--vellum:#fff8ea;--gold:#b48239;--rust:#8d321d;--green:#294538}
+  *{box-sizing:border-box}
+  body{margin:0;padding:20px 16px 60px;font:17px/1.45 Georgia,serif;color:var(--ink);background:#f6ead3}
+  h1{font-size:1.5rem;margin:0 0 4px}
+  .tag{display:inline-block;padding:2px 8px;border-radius:6px;background:var(--rust);color:#fff;font:700 .7rem system-ui;letter-spacing:.08em;text-transform:uppercase}
+  ol.steps{padding-left:22px}
+  ol.steps li{margin:6px 0}
+  fieldset{border:1px solid rgba(36,24,15,.2);border-radius:14px;padding:10px 14px;margin:14px 0}
+  label{display:block;margin:6px 0}
+  button{font:700 1.05rem Georgia,serif;border:0;border-radius:999px;padding:14px 20px;background:var(--green);color:var(--vellum);width:100%;margin:6px 0}
+  button.secondary{background:rgba(36,24,15,.1);color:var(--ink)}
+  #now{margin:12px 0;padding:12px 14px;border-radius:14px;background:var(--ink);color:var(--vellum)}
+  #verdict{margin:12px 0;padding:12px 14px;border-radius:14px;background:#fff8ea;border:2px solid var(--gold);font-weight:700}
+  #log{font:13px/1.4 ui-monospace,Menlo,monospace;background:#fff8ea;border-radius:12px;padding:10px;max-height:50vh;overflow:auto;white-space:pre-wrap}
+  .credit{font-size:.8rem;color:var(--muted);text-align:center;margin-top:20px}
+</style>
+</head>
+<body>
+<span class="tag">Throwaway test</span>
+<h1>Does the next chapter start with the screen locked?</h1>
+<ol class="steps">
+  <li>Pick a mode below (start with A).</li>
+  <li>Tap <b>Start</b>, then <b>lock the phone straight away</b>.</li>
+  <li>Listen. There are three short psalms. Note whether each one starts by itself. While locked, check the lock screen's title and its skip buttons.</li>
+  <li>Unlock, come back here and read the result. Then try mode B.</li>
+</ol>
+
+<fieldset>
+  <legend>Mode</legend>
+  <label><input type="radio" name="mode" value="A" checked> <b>A.</b> One player; the next chapter is loaded when the last ends</label>
+  <label><input type="radio" name="mode" value="B"> <b>B.</b> Two players; the next chapter is loaded in the background</label>
+</fieldset>
+
+<button id="start">Start</button>
+<button id="stop" class="secondary">Stop</button>
+<div id="now">Not playing.</div>
+<div id="verdict">No result yet.</div>
+<button id="clear" class="secondary">Clear log</button>
+<div id="log"></div>
+<p class="credit">ESV® audio © Crossway · <a href="https://www.esv.org">esv.org</a></p>
+
+<script>
+const CHAPTERS = ["Psalms 133", "Psalms 117", "Psalms 134"];
+const LOG_KEY = "spike.esvAudio.log";
+const url = ref => `/api/esv-audio?ref=${encodeURIComponent(ref)}`;
+const players = [new Audio(), new Audio()];
+players.forEach(p => { p.preload = "auto"; });
+let run = null; // { mode, index, active, startedAt }
+
+const $ = id => document.getElementById(id);
+const readLog = () => { try { return JSON.parse(localStorage.getItem(LOG_KEY)) || []; } catch { return []; } };
+function log(event, extra = "") {
+  const entry = { t: new Date().toLocaleTimeString(), mode: run?.mode || "-", chapter: run ? run.index + 1 : 0, screen: document.visibilityState, event, extra };
+  const all = readLog(); all.push(entry);
+  localStorage.setItem(LOG_KEY, JSON.stringify(all.slice(-200)));
+  draw();
+}
+function draw() {
+  const all = readLog();
+  $("log").textContent = all.slice().reverse().map(e =>
+    `${e.t}  ${e.mode}  ch${e.chapter}  [${e.screen}]  ${e.event}${e.extra ? "  " + e.extra : ""}`).join("\n") || "(empty)";
+  $("verdict").textContent = verdict(all);
+}
+// "hidden" is what the page reports while the phone is locked.
+function verdict(all) {
+  const lines = [];
+  for (const mode of ["A", "B"]) {
+    const rows = all.filter(e => e.mode === mode);
+    if (!rows.length) continue;
+    const lockedStarts = rows.filter(e => e.event === "playing" && e.chapter > 1 && e.screen === "hidden").map(e => e.chapter);
+    const blocked = rows.filter(e => e.event === "play() refused" && e.screen === "hidden");
+    if (lockedStarts.length) lines.push(`Mode ${mode}: PASS. Chapter ${[...new Set(lockedStarts)].join(" and ")} started by itself while locked.`);
+    else if (blocked.length) lines.push(`Mode ${mode}: FAIL. iOS refused to start chapter ${blocked[0].chapter} while locked (${blocked[0].extra}).`);
+    else if (rows.some(e => e.event === "playing" && e.chapter > 1)) lines.push(`Mode ${mode}: inconclusive. Later chapters played, but only while the screen was on. Lock it right after Start.`);
+    else lines.push(`Mode ${mode}: no later chapter started yet.`);
+  }
+  return lines.join("\n") || "No result yet.";
+}
+
+function setSession(ref) {
+  if (!("mediaSession" in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: ref.replace("Psalms", "Psalm"), artist: "ESV · spike", album: "Grant Horner reading plan",
+    artwork: [{ src: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }]
+  });
+}
+function current() { return run ? players[run.active] : null; }
+function wire() {
+  const ms = navigator.mediaSession;
+  if (!ms) return;
+  const safe = (action, fn) => { try { ms.setActionHandler(action, fn); } catch { /* unsupported action */ } };
+  safe("play", () => { current()?.play(); log("lock screen: play"); });
+  safe("pause", () => { current()?.pause(); log("lock screen: pause"); });
+  safe("seekbackward", d => { const p = current(); if (p) p.currentTime = Math.max(0, p.currentTime - (d.seekOffset || 15)); log("lock screen: back 15s"); });
+  safe("seekforward", d => { const p = current(); if (p) p.currentTime = Math.min(p.duration || 0, p.currentTime + (d.seekOffset || 15)); log("lock screen: forward 15s"); });
+  safe("seekto", d => { const p = current(); if (p) p.currentTime = d.seekTime; log("lock screen: seek", `${Math.round(d.seekTime)}s`); });
+  // Deliberately no previous/next track, so iOS shows the 15-second buttons.
+  safe("previoustrack", null);
+  safe("nexttrack", null);
+}
+
+players.forEach((p, slot) => {
+  p.addEventListener("playing", () => { if (run && run.active === slot) { log("playing", CHAPTERS[run.index]); setSession(CHAPTERS[run.index]); } });
+  p.addEventListener("ended", () => { if (run && run.active === slot) { log("ended"); advance(); } });
+  p.addEventListener("error", () => { if (run) log("error", `${p.error?.code} on slot ${slot}`); });
+  p.addEventListener("timeupdate", () => {
+    if (!run || run.active !== slot || !navigator.mediaSession?.setPositionState || !isFinite(p.duration)) return;
+    try { navigator.mediaSession.setPositionState({ duration: p.duration, position: p.currentTime, playbackRate: p.playbackRate }); } catch { /* ignore */ }
+  });
+});
+
+function playSlot(slot) {
+  players[slot].play().then(() => {}, err => log("play() refused", err.name));
+}
+function preloadNext() {
+  if (run.mode !== "B") return;
+  const next = run.index + 1;
+  if (next >= CHAPTERS.length) return;
+  const other = players[1 - run.active];
+  other.src = url(CHAPTERS[next]);
+  other.load();
+  log("preloading", CHAPTERS[next]);
+}
+function advance() {
+  run.index += 1;
+  if (run.index >= CHAPTERS.length) { log("finished all chapters"); run = null; $("now").textContent = "Finished."; return; }
+  if (run.mode === "A") {
+    const p = players[run.active];
+    p.src = url(CHAPTERS[run.index]);
+    log("swapped src", CHAPTERS[run.index]);
+    playSlot(run.active);
+  } else {
+    run.active = 1 - run.active;
+    log("switching player", CHAPTERS[run.index]);
+    playSlot(run.active);
+    preloadNext();
+  }
+  $("now").textContent = `Chapter ${run.index + 1} of ${CHAPTERS.length}: ${CHAPTERS[run.index]}`;
+}
+
+$("start").onclick = () => {
+  players.forEach(p => { p.pause(); p.removeAttribute("src"); p.load(); });
+  const mode = document.querySelector("input[name=mode]:checked").value;
+  run = { mode, index: 0, active: 0 };
+  wire();
+  players[0].src = url(CHAPTERS[0]);
+  log("start", `mode ${mode}`);
+  playSlot(0); // must run inside the tap
+  preloadNext();
+  $("now").textContent = `Chapter 1 of ${CHAPTERS.length}: ${CHAPTERS[0]}. Lock the phone now.`;
+};
+$("stop").onclick = () => { players.forEach(p => p.pause()); log("stopped by tap"); run = null; $("now").textContent = "Stopped."; };
+$("clear").onclick = () => { localStorage.removeItem(LOG_KEY); draw(); };
+document.addEventListener("visibilitychange", () => log(document.visibilityState === "hidden" ? "screen off / left page" : "back on page"));
+draw();
+</script>
+</body>
+</html>
