@@ -79,6 +79,31 @@ Bible format; this file covers the traps, the reasons behind decisions, and how 
   Samantha. Chrome on iOS uses the same WebKit engine, so it has the same limit. Web
   pages on iOS cannot reach Enhanced or Premium voices at all.
 
+## ESV recorded audio
+
+- Design: `docs/superpowers/specs/2026-10-24-esv-recorded-audio-design.md`. Readers whose
+  translation is named ESV get Crossway's recordings through one `<audio>` element.
+  Everyone else keeps speech.
+- `api/esv-audio.js` is the only server code. It holds `ESV_API_KEY` (a Vercel env var;
+  the local copy is in the Keychain: `security find-generic-password -s esv-api-key -w`,
+  never echo it). It accepts only real chapters, because it is public and every call
+  spends the shared 5,000/day quota. **Single-chapter books must be asked for by name:
+  "Jude 1" is verse 1 to the ESV API.** Lengths come from file size, since the MP3s are
+  constant 128 kbps.
+- The audio element lives in JS, never in `#app`, so `render()` can't kill playback.
+  iOS starts audio only synchronously in the tap, so MP3 addresses are fetched when
+  the page renders, not when Listen is pressed.
+- One element, with `src` swapped per chapter. Tested on an iPhone: it starts the next
+  chapter by itself with the screen locked. Two alternating elements made the lock
+  screen show Play while playing.
+- The lock screen shows ±10 s icons that a page can't change, so all skips are 10 s.
+  Don't register `previoustrack`/`nexttrack`, or iOS swaps the skip buttons out.
+- The resume place is in its own localStorage key (`pghBiblePlan.listen`), not in
+  `state`. Undo compares `JSON.stringify(state)`, and saving every few seconds would
+  break it.
+- Test on the live site: Andrew is the only user. Vercel Previews sit behind a login
+  that curl can't pass and iOS media requests may not carry.
+
 ## Copyright and deploys
 
 - The GitHub repo is **public**. Never commit modern translations (ESV, NASB, NIV…).

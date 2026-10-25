@@ -85,6 +85,19 @@ Environment:
 - For local testing, the key is in the macOS Keychain:
   `security find-generic-password -s esv-api-key -w`. Never echo it.
 
+## Built 2026-10-25: changes from the plan above
+
+- **Skip is 10 s everywhere** (Andrew approved, replacing 15 s). iOS draws ±10.
+- **"Start over" restarts the current chapter** ("Start Acts 28 over"), with Undo.
+  Earlier chapters are already Done, and un-marking them would discard progress.
+- **Single-chapter books are queried by name** ("Jude", not "Jude 1", which is verse 1).
+- **Lengths come from file size** (constant 128 kbps), fetched by the server with a HEAD,
+  because iOS ignores `preload="metadata"`. The JSON form returns `{ url, seconds }`.
+- **The resume place is stored outside `state`**, so Undo and Export are unaffected.
+- **The timeline spans the chapters being listened to** (today's unfinished ones, in
+  list order from where you started), not all ten. "Reading k of 10" counts Done
+  chapters.
+
 ## Spike result (2026-10-25, Andrew's iPhone, live site `/spike`)
 
 - **Both approaches pass.** With the screen locked from the start, chapters 2 and 3

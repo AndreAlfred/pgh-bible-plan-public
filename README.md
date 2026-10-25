@@ -10,6 +10,7 @@ Unofficial public-facing reading-plan tracker for the Professor Grant Horner Bib
 - KJV chapter text bundled as static JSON
 - Bring-your-own Bible JSON import stored locally in browser IndexedDB
 - Browser read-aloud controls for one chapter or all ten readings
+- ESV readers hear Crossway's recorded audio, which keeps playing with the phone locked, resumes where you left off, and marks each finished chapter Done
 - Export/import progress backup
 - Mark chapters done to hide them; Undo after Complete Day, Reset or import
 - Dark mode that follows the device, with a sun/moon override
@@ -18,7 +19,7 @@ Unofficial public-facing reading-plan tracker for the Professor Grant Horner Bib
 
 ## Copyright posture
 
-This project intentionally does **not** include NASB95, ESV, NIV, or other copyrighted modern Bible translations. Imported Bible files remain in the user's browser and are not uploaded by this static app.
+This project intentionally does **not** include NASB95, ESV, NIV, or other copyrighted modern Bible translations. ESV audio is streamed from Crossway's API (key held server-side) and never stored or cached by the app. Imported Bible files remain in the user's browser and are not uploaded by this static app.
 
 This site is unofficial and is not affiliated with or endorsed by Professor Grant Horner, The Lockman Foundation, or any Bible publisher.
 

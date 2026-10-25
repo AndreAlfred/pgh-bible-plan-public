@@ -77,6 +77,8 @@ self.addEventListener("fetch", event => {
   if (url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com") {
     event.respondWith(cacheFirst(request, FONTS));
   }
+  // /api/esv-audio and the MP3s on audio.esv.org fall through to the network on
+  // purpose: Crossway's terms cap cached ESV content, so recordings are never stored.
 });
 
 // The page sends the coming week's chapter files; fetch whichever aren't saved yet.
