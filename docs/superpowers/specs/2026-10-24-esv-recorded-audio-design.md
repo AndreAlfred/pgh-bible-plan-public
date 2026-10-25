@@ -85,6 +85,27 @@ Environment:
 - For local testing, the key is in the macOS Keychain:
   `security find-generic-password -s esv-api-key -w`. Never echo it.
 
+## Spike result (2026-10-25, Andrew's iPhone, live site `/spike`)
+
+- **Both approaches pass.** With the screen locked from the start, chapters 2 and 3
+  started by themselves. Mode A swaps `src` on one element; mode B alternates two
+  preloaded elements.
+- **Mode B shows the wrong lock-screen state.** The lock screen showed Play while audio
+  was playing. Tapping it switched to Pause without interrupting playback. With two
+  elements, iOS tracks the wrong one. **Decision: build mode A**, a single element.
+  Background preloading was already best effort.
+- **The lock screen shows ±10 s skip icons**, and a web page cannot change them. The
+  spike's handler skipped 15 s under a 10 s icon. Proposed: skip 10 s everywhere,
+  lock screen and in-page, so each button does what its icon says. This replaces the
+  15 s decided earlier, pending Andrew's confirmation in the build plan.
+- **The Preview login blocked the test**, and the first Vercel key was the literal text
+  `ESV_API_KEY`. Testing now happens on the live site (Andrew is the only user). The
+  function trims whitespace, quotes and a "Token " prefix from the key.
+- **iOS media requests may not carry page cookies.** The page asks the function for JSON
+  (`?format=json` → `{url}`) before the tap and gives `<audio>` the audio.esv.org URL
+  directly. Keep this in the real build: it also avoids depending on the redirect
+  through Vercel.
+
 ## What Andrew decided
 
 - **Who gets it:** readers whose selected translation is an imported ESV.
