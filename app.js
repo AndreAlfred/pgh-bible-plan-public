@@ -51,7 +51,8 @@ let audio = {
   open: false,
   title: "Ready",
   subtitle: "Tap Listen, or pick a single chapter.",
-  mode: "idle"
+  mode: "idle",
+  driver: "speech"
 };
 
 const $ = sel => document.querySelector(sel);
@@ -75,18 +76,21 @@ function positionsForDay(day) {
   return PLAN.map((list, i) => (indexOfRef(list, START[i]) + offset) % list.chapters.length);
 }
 function initialState() {
-  return { day: 1, positions: positionsForDay(1), done: {}, translation: "KJV", history: [], importedNames: [], voice: "", rate: 1, textLayout: "verses", verseNumbers: true };
+  return { day: 1, positions: positionsForDay(1), done: {}, translation: "KJV", history: [], importedNames: [], voice: "", rate: 1, textLayout: "verses", verseNumbers: true, esvAudio: true, keepPlaying: true };
 }
 // A position past the end of its list makes render() throw, and because the bad
 // state is already saved, the page would stay blank on every reload.
 const validDay = day => Number.isInteger(day) && day >= 1;
 const TEXT_LAYOUTS = ["verses", "flow"];
-// Reading preferences are cosmetic, so a bad value falls back to the default rather
-// than rejecting the saved state or backup it came in.
-const withValidTextPrefs = st => ({
+// Preferences are cosmetic, so a bad value falls back to the default rather than
+// rejecting the saved state or backup it came in.
+const boolOr = (v, fallback) => typeof v === "boolean" ? v : fallback;
+const withValidPrefs = st => ({
   ...st,
   textLayout: TEXT_LAYOUTS.includes(st.textLayout) ? st.textLayout : "verses",
-  verseNumbers: typeof st.verseNumbers === "boolean" ? st.verseNumbers : true
+  verseNumbers: boolOr(st.verseNumbers, true),
+  esvAudio: boolOr(st.esvAudio, true),
+  keepPlaying: boolOr(st.keepPlaying, true)
 });
 const validPositions = positions => Array.isArray(positions) && positions.length === PLAN.length &&
   positions.every((p, i) => Number.isInteger(p) && p >= 0 && p < PLAN[i].chapters.length);
@@ -96,7 +100,7 @@ function loadState() {
   catch { return initialState(); }
   if (!validDay(saved.day)) return initialState();
   if (!validPositions(saved.positions)) saved.positions = positionsForDay(saved.day);
-  return withValidTextPrefs(saved);
+  return withValidPrefs(saved);
 }
 function persistState() {
   // Private tabs deny writes. Losing progress is survivable; throwing here is not,
@@ -118,6 +122,43 @@ function withDone(st, i, done) {
   if (done) marks[i] = doneStamp(st, i);
   else delete marks[i];
   return { ...st, done: marks };
+}
+// Recorded audio exists only for the ESV (see docs/audio-licensing.md). Any imported
+// translation named "ESV", "ESV 2016", "ESV (2025)"… counts; "ESVX" does not.
+const isEsvTranslation = name => /^esv(?![a-z])/i.test(String(name || "").trim());
+// Today's unfinished chapters, starting at `start` and wrapping round, so starting
+// from the sixth card still reaches the first five.
+function listenQueue(st, start = 0) {
+  const order = PLAN.map((_, i) => (start + i) % PLAN.length);
+  return order.filter(i => !isDone(st, i));
+}
+// A saved listening place is only good for the same day, translation and chapter,
+// and only while that chapter is still unfinished.
+function validResume(st, saved) {
+  if (!saved || typeof saved !== "object" || saved.day !== st.day) return null;
+  if (saved.translation !== st.translation || !isEsvTranslation(saved.translation)) return null;
+  if (!Number.isFinite(saved.seconds) || saved.seconds < 0) return null;
+  const index = PLAN.findIndex((list, i) => refText(list.chapters[st.positions[i]]) === saved.ref);
+  return index === -1 || isDone(st, index) ? null : { ...saved, index };
+}
+// Offsets of each queued chapter on one continuous timeline. Lengths come from the
+// server (file size) before anything plays; `complete` is false until all are known.
+function queueTimeline(seconds) {
+  const starts = [];
+  let total = 0;
+  for (const s of seconds) { starts.push(total); total += s > 0 ? s : 0; }
+  return { starts, total, complete: seconds.length > 0 && seconds.every(s => s > 0) };
+}
+function formatClock(totalSeconds) {
+  const t = Math.max(0, Math.floor(totalSeconds || 0));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = String(t % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+}
+function timeLeftPhrase(seconds) {
+  const t = Math.max(0, Math.round(seconds || 0));
+  if (t < 60) return `${t} sec`;
+  const m = Math.floor(t / 60), sec = t % 60;
+  return sec ? `${m} min ${sec} sec` : `${m} min`;
 }
 // Theme follows the device unless the user picked one. Picking the device's own
 // setting clears the override, so the toggle needs no third "auto" state. The
@@ -421,7 +462,7 @@ function parseProgressFile(text) {
   if (!validPositions(raw.positions) || !validDay(raw.day ?? 1)) {
     return { ok: false, error: "That progress backup is damaged — its day or reading positions are out of range. Nothing was changed." };
   }
-  return { ok: true, state: withValidTextPrefs({ ...initialState(), ...raw }) };
+  return { ok: true, state: withValidPrefs({ ...initialState(), ...raw }) };
 }
 function parseBibleFile(raw, fallbackName) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -578,8 +619,35 @@ function clampRate(v) {
 }
 function rate() { return clampRate(state?.rate); }
 const rateLabel = v => `${Number(v).toFixed(2).replace(/0$/, "")}×`;
-function setVoice(name) { state.voice = name; persistState(); }
-function setRate(v) { state.rate = clampRate(v); persistState(); }
+function setVoice(name) {
+  const wasRecording = useRecording();
+  if (name === ESV_VOICE) state.esvAudio = true;
+  else {
+    state.voice = name;
+    if (isEsvTranslation(state.translation)) state.esvAudio = false;
+  }
+  if (wasRecording !== useRecording()) clearAudio();
+  persistState();
+  refreshListenUi();
+}
+function setRate(v) {
+  state.rate = clampRate(v);
+  if (rec.el) { rec.el.defaultPlaybackRate = rate(); rec.el.playbackRate = rate(); }
+  persistState();
+}
+function setKeepPlaying(on) { state.keepPlaying = !!on; persistState(); }
+// A queue built for one translation or driver mustn't linger in the dock for another.
+function clearAudio() {
+  stopAudio(false);
+  audio.items = [];
+  audio.title = "Ready";
+  renderAudioPlayer();
+}
+function setTranslation(name) {
+  clearAudio();
+  state.translation = name;
+  saveState();
+}
 function setTextLayout(layout) { if (TEXT_LAYOUTS.includes(layout)) { state.textLayout = layout; saveState(); } }
 function setVerseNumbers(on) { state.verseNumbers = !!on; saveState(); }
 function buildChapterItems(chapter, label, { announce = false, chapterIndex = 0 } = {}) {
@@ -610,18 +678,21 @@ function primeSpeech() {
   }
 }
 async function speakChapter(i) {
+  if (useRecording()) return state.keepPlaying ? listenFrom(i) : listenToOne(i);
+  if (state.keepPlaying) return speakAll(i);
   primeSpeech();
   const r = currentReadings()[i];
   const ch = await getChapter(r.current);
   const label = refText(r.current);
   setAudioQueue(buildChapterItems(ch, label, { announce: false, chapterIndex: 0 }), label, r.list.name, "chapter");
 }
-async function speakAll() {
+async function speakAll(start = null) {
+  if (useRecording()) return start === null ? listenToday() : listenFrom(start);
   primeSpeech();
   // Skip chapters already marked done; once everything is done, Listen replays the day.
   const all = currentReadings();
-  const open = all.filter(r => !isDone(state, r.index));
-  const readings = open.length ? open : all;
+  const queued = listenQueue(state, start ?? 0);
+  const readings = queued.length ? queued.map(i => all[i]) : all;
   const chapters = await Promise.all(readings.map(r => getChapter(r.current)));
   const items = chapters.flatMap((ch, i) =>
     buildChapterItems(ch, refText(readings[i].current), { announce: true, chapterIndex: i })
@@ -709,6 +780,7 @@ function previewSeek(value) {
 }
 function commitSeek(value) {
   scrubbing = false;
+  if (audio.driver === "file") return recSeekQueue(Number(value));
   seekAudio(value);
 }
 function cancelScrub() {
@@ -723,10 +795,12 @@ function seekAudio(index) {
   speakCurrent();
 }
 function stepAudio(delta) {
+  if (audio.driver === "file") return recStepChapter(delta);
   if (!audio.items.length) return;
   seekAudio(audio.index + delta);
 }
 function pauseAudio() {
+  if (audio.driver === "file") return rec.el?.pause();
   if (!audio.items.length) return;
   audio.playing = true;
   audio.paused = true;
@@ -734,12 +808,14 @@ function pauseAudio() {
   renderAudioPlayer();
 }
 function resumeAudio() {
+  if (audio.driver === "file") return recResume();
   if (!audio.items.length) return;
   audio.playing = true;
   audio.paused = false;
   speakCurrent();
 }
 function stopAudio(update = true) {
+  recStop();
   audio.playing = false;
   audio.paused = false;
   audio.index = 0;
@@ -754,31 +830,47 @@ function renderVoiceSelectOnly() {
   const el = document.getElementById("voiceSelect");
   if (el) el.innerHTML = voiceOptions();
 }
-function voiceOptionsHtml(list, selectedName, langs = deviceLanguages()) {
-  if (!list.length) return `<option value="">No voices found yet</option>`;
+// For ESV readers the recording is offered first; `esv` is null when it isn't offered,
+// otherwise whether it is the current choice.
+const ESV_VOICE = "__esv__";
+function voiceOptionsHtml(list, selectedName, langs = deviceLanguages(), { esv = null } = {}) {
+  const recording = esv === null ? "" : `<option value="${ESV_VOICE}"${esv ? " selected" : ""}>ESV recording (Crossway)</option>`;
+  if (esv) selectedName = null;
+  if (!list.length) return recording || `<option value="">No voices found yet</option>`;
   const own = new Set(langs.map(langPrefix));
   const usable = usableVoices(list, selectedName);
   const others = usable.filter(v => !isEnglish(v) && (own.has(langPrefix(v.lang)) || v.name === selectedName));
   const filtered = [...usable.filter(isEnglish), ...others];
   const ordered = filtered.length ? filtered : usable;
   const device = `<option value="${DEVICE_VOICE}"${selectedName === DEVICE_VOICE ? " selected" : ""}>Device default (set in Settings)</option>`;
-  return device + ordered.map(v =>
+  return recording + device + ordered.map(v =>
     `<option value="${esc(v.name)}"${v.name === selectedName ? " selected" : ""}>${esc(v.name)} · ${esc(v.lang)}${voiceTier(v) ? ` · ${TIERS[voiceTier(v)]}` : ""}</option>`
   ).join("");
 }
-function voiceOptions() { return voiceOptionsHtml(voices, state?.voice); }
+function voiceOptions() {
+  const offered = isEsvTranslation(state?.translation);
+  return voiceOptionsHtml(voices, state?.voice, deviceLanguages(), { esv: offered ? state.esvAudio : null });
+}
 function renderAudioPlayer() {
   // A verse ending mid-drag would otherwise replace the input under the finger.
   if (scrubbing) return;
   const el = document.getElementById("audioDock");
   if (el) el.outerHTML = audioPlayerHtml();
 }
+function refreshListenUi() {
+  const hero = document.getElementById("heroListen");
+  if (hero) hero.outerHTML = heroListenHtml();
+  renderVoiceSelectOnly();
+  renderAudioPlayer();
+}
 function primaryLabel() {
+  if (audio.driver === "file") return rec.el && !rec.el.paused ? "Pause" : "Play";
   if (audio.playing && !audio.paused) return "Pause";
   if (audio.items.length) return "Play";
   return "Listen to all ten";
 }
 function primaryAction() {
+  if (audio.driver === "file") return rec.el && !rec.el.paused ? pauseAudio() : resumeAudio();
   if (audio.playing && !audio.paused) return pauseAudio();
   if (audio.items.length) return resumeAudio();
   return speakAll();
@@ -801,6 +893,7 @@ function markersHtml() {
   ).join("");
 }
 function audioPlayerHtml() {
+  if (audio.open && (audio.driver === "file" || (useRecording() && !audio.items.length))) return recDockHtml();
   if (!audio.open) {
     return `<section id="audioDock" class="audio-dock is-closed" aria-label="Audio player">
       <button class="audio-tab" onclick="toggleAudioOpen()">Audio Player</button>
@@ -823,6 +916,347 @@ function audioPlayerHtml() {
   </section>`;
 }
 
+// ---- ESV recorded audio ---------------------------------------------------------
+// One <audio> element, created here and never placed in #app, because render()
+// rewrites #app on every change. iOS keeps a single element playing through the lock
+// screen and lets it start the next chapter by itself (tested on an iPhone,
+// 2026-10-25); two alternating elements showed the wrong play/pause state there.
+const LISTEN_KEY = "pghBiblePlan.listen";
+const ESV_AUDIO_KEY = "pghBiblePlan.esvAudio";
+const SKIP_SECONDS = 10; // iOS draws ±10 on the lock screen and pages can't change it
+const RESUME_REWIND = 3;
+// `heard` is the last position that actually played: a failed load can reset the
+// element's clock to 0 before the error arrives.
+const rec = { el: null, queue: [], pos: 0, single: false, pendingSeek: null, heard: 0, error: "", buffering: false, lastSave: 0, lastPaint: 0 };
+function useRecording(st = state) { return !!st && isEsvTranslation(st.translation) && st.esvAudio !== false; }
+
+// The resume place lives outside `state`: Undo compares JSON.stringify(state), and
+// saving every few seconds would make every Undo look stale. Export skips it too.
+function readResume() { try { return JSON.parse(localStorage.getItem(LISTEN_KEY)); } catch { return null; } }
+function writeResume(place) { try { localStorage.setItem(LISTEN_KEY, JSON.stringify(place)); } catch { /* private tab */ } }
+function savedPlace() { return validResume(state, readResume()); }
+
+// Chapter ref -> { url, seconds }, fetched before any tap: iOS only starts audio
+// synchronously inside the tap, so there is no time to ask the server then. These
+// are addresses and lengths, not ESV text or audio, so keeping them is fine.
+const esvAudioInfo = new Map(Object.entries((() => {
+  try { return JSON.parse(localStorage.getItem(ESV_AUDIO_KEY)) || {}; } catch { return {}; }
+})()));
+const esvResolving = new Set();
+function resolveEsvAudio(refs) {
+  const missing = refs.filter(r => !esvAudioInfo.has(r) && !esvResolving.has(r));
+  if (!missing.length) return;
+  missing.forEach(r => esvResolving.add(r));
+  Promise.all(missing.map(ref =>
+    fetch(`/api/esv-audio?ref=${encodeURIComponent(ref)}&format=json`)
+      .then(r => r.ok ? r.json() : null)
+      .then(info => { if (info?.url) esvAudioInfo.set(ref, { url: info.url, seconds: info.seconds || null }); })
+      .catch(() => { /* offline or refused: the tap falls back to the redirect */ })
+      .finally(() => esvResolving.delete(ref))
+  )).then(() => {
+    try { localStorage.setItem(ESV_AUDIO_KEY, JSON.stringify(Object.fromEntries(esvAudioInfo))); } catch { /* private tab */ }
+    refreshListenUi();
+  });
+}
+const refAt = i => refText(currentReadings()[i].current);
+const recSrc = ref => esvAudioInfo.get(ref)?.url || `/api/esv-audio?ref=${encodeURIComponent(ref)}`;
+const recLength = ref => esvAudioInfo.get(ref)?.seconds || null;
+
+function recElement() {
+  if (rec.el) return rec.el;
+  const el = new Audio();
+  el.preload = "auto";
+  el.addEventListener("loadedmetadata", () => {
+    if (rec.pendingSeek !== null) { el.currentTime = Math.min(rec.pendingSeek, el.duration || rec.pendingSeek); rec.pendingSeek = null; }
+    const ref = refAt(rec.queue[rec.pos]);
+    if (!recLength(ref) && Number.isFinite(el.duration)) esvAudioInfo.set(ref, { url: recSrc(ref), seconds: el.duration });
+  });
+  el.addEventListener("playing", () => { rec.error = ""; rec.buffering = false; recSessionState("playing"); refreshListenUi(); });
+  el.addEventListener("pause", () => { recSave(true); recSessionState("paused"); refreshListenUi(); });
+  el.addEventListener("waiting", () => { rec.buffering = true; recPaint(true); });
+  el.addEventListener("timeupdate", () => {
+    if (rec.pendingSeek === null && el.currentTime > 0) rec.heard = el.currentTime;
+    recSave(false); recPaint(false); recPositionState();
+  });
+  el.addEventListener("ended", recChapterEnded);
+  el.addEventListener("error", () => {
+    if (!el.getAttribute("src")) return;
+    // A cached address may have gone stale, so the next try goes through the server's
+    // redirect instead. The length is still right.
+    const ref = refAt(rec.queue[rec.pos]);
+    const info = esvAudioInfo.get(ref);
+    if (info) esvAudioInfo.set(ref, { ...info, url: null });
+    recLost();
+  });
+  rec.el = el;
+  return el;
+}
+function recLost() {
+  rec.error = "lost";
+  rec.buffering = false;
+  rec.pendingSeek = Math.max(0, Math.max(rec.heard, recCurrentSeconds()) - RESUME_REWIND);
+  if (rec.el && !rec.el.paused) rec.el.pause();
+  recSave(true);
+  recSessionState("paused");
+  refreshListenUi();
+}
+function recCurrentSeconds() {
+  if (rec.pendingSeek !== null) return rec.pendingSeek;
+  return rec.el && Number.isFinite(rec.el.currentTime) ? rec.el.currentTime : 0;
+}
+function recLoad(pos, seconds = 0) {
+  const el = recElement();
+  rec.pos = pos;
+  const ref = refAt(rec.queue[pos]);
+  rec.pendingSeek = seconds > 0 ? seconds : null;
+  rec.heard = seconds > 0 ? seconds : 0;
+  el.src = recSrc(ref);
+  el.defaultPlaybackRate = rate();
+  el.playbackRate = rate();
+  recMetadata(ref);
+}
+function recPlay() {
+  const el = recElement();
+  el.playbackRate = rate();
+  // Runs inside the tap for the first chapter; iOS allows the later ones by itself.
+  el.play().catch(err => { if (err.name !== "AbortError") recLost(); });
+}
+// Starts a listening session. `single` plays one chapter and leaves the saved place.
+function recStart(queue, pos = 0, seconds = 0, { single = false } = {}) {
+  if (!queue.length) { toast("All ten chapters are done for today."); return; }
+  if (audio.items.length) { cancelSpeech(); audio.items = []; }
+  audio.driver = "file";
+  audio.open = true;
+  audio.playing = true;
+  audio.paused = false;
+  rec.queue = queue;
+  rec.single = single;
+  rec.error = "";
+  recLoad(pos, seconds);
+  recPlay();
+  recWireSession();
+  refreshListenUi();
+}
+function listenToday() {
+  const place = savedPlace();
+  if (place) return listenResume(place);
+  recStart(listenQueue(state));
+}
+function listenResume(place = savedPlace()) {
+  if (!place) return listenToday();
+  recStart(listenQueue(state, place.index), 0, Math.max(0, place.seconds - RESUME_REWIND));
+}
+function listenFrom(i) { recStart(listenQueue(state, i)); }
+function listenToOne(i) { recStart([i], 0, 0, { single: true }); }
+function recResume() {
+  const el = recElement();
+  if (!rec.queue.length) return listenToday();
+  if (rec.error || !el.getAttribute("src")) {
+    const seconds = rec.pendingSeek ?? recCurrentSeconds();
+    rec.error = "";
+    recLoad(rec.pos, seconds);
+  }
+  recPlay();
+}
+// "Start over" restarts this chapter, never the day: earlier chapters were marked
+// Done as they finished, and undoing that would discard real progress.
+function listenStartOver() {
+  const before = readResume();
+  const place = savedPlace();
+  const index = rec.queue.length ? rec.queue[rec.pos] : place?.index;
+  if (index === undefined) return listenToday();
+  if (rec.queue.length && rec.el) { rec.pendingSeek = null; rec.el.currentTime = 0; recPlay(); }
+  else recStart(listenQueue(state, index), 0, 0);
+  toast(`Starting ${refAt(index)} over.`, { actionLabel: "Undo", ms: 8000, action: () => {
+    if (!before) return;
+    writeResume(before);
+    const back = Math.max(0, before.seconds - RESUME_REWIND);
+    if (rec.el && rec.queue.length && refAt(rec.queue[rec.pos]) === before.ref) rec.el.currentTime = back;
+  } });
+}
+function recStop() {
+  if (!rec.el) { if (audio.driver === "file") audio.driver = "speech"; return; }
+  if (!rec.el.paused) rec.el.pause();
+  recSave(true);
+  rec.el.removeAttribute("src");
+  rec.el.load();
+  rec.queue = [];
+  rec.error = "";
+  audio.driver = "speech";
+  recSessionState("none");
+}
+function recSave(force) {
+  if (rec.single || !rec.queue.length || !rec.el) return;
+  const now = Date.now();
+  if (!force && now - rec.lastSave < 5000) return;
+  rec.lastSave = now;
+  writeResume({ day: state.day, translation: state.translation, ref: refAt(rec.queue[rec.pos]), seconds: Math.round(recCurrentSeconds() * 10) / 10 });
+}
+function recChapterEnded() {
+  const finished = rec.queue[rec.pos];
+  // A recording that plays to the end marks its chapter Done, like the Done button.
+  state = withDone(state, finished, true);
+  persistState();
+  let next = rec.pos + 1;
+  while (next < rec.queue.length && isDone(state, rec.queue[next])) next += 1;
+  if (rec.single || next >= rec.queue.length) {
+    rec.queue = [];
+    audio.driver = "speech";
+    audio.playing = false;
+    try { localStorage.removeItem(LISTEN_KEY); } catch { /* ignore */ }
+    recSessionState("none");
+    render();
+    toast(listenQueue(state).length ? `Finished ${refAt(finished)}.` : "That's all ten chapters for today.");
+    return;
+  }
+  recLoad(next);
+  recPlay();
+  recSave(true);
+  render();
+}
+// Back from the first chapter restarts it; forward from the last does nothing.
+function recStepChapter(delta) {
+  const pos = Math.max(0, Math.min(rec.queue.length - 1, rec.pos + delta));
+  if (pos === rec.pos && delta > 0) return;
+  recLoad(pos);
+  recPlay();
+}
+function recSkip(seconds) {
+  const el = recElement();
+  if (!rec.queue.length) return;
+  const to = recCurrentSeconds() + seconds;
+  el.currentTime = Math.max(0, Math.min(Number.isFinite(el.duration) ? el.duration - 0.5 : to, to));
+  recPaint(true);
+}
+function recQueueLengths() { return rec.queue.map(i => recLength(refAt(i))); }
+function recSeekQueue(value) {
+  const line = queueTimeline(recQueueLengths());
+  if (!line.complete) { recElement().currentTime = value; return; }
+  let pos = line.starts.findLastIndex(start => value >= start);
+  pos = Math.max(0, pos);
+  const into = value - line.starts[pos];
+  if (pos === rec.pos) recElement().currentTime = into;
+  else { recLoad(pos, into); recPlay(); }
+}
+
+// Lock screen and AirPods. No previous/next track, so iOS shows the ±10 buttons.
+function recWireSession() {
+  const ms = typeof navigator !== "undefined" && navigator.mediaSession;
+  if (!ms || rec.wired) return;
+  rec.wired = true;
+  const set = (action, fn) => { try { ms.setActionHandler(action, fn); } catch { /* unsupported */ } };
+  set("play", () => recResume());
+  set("pause", () => rec.el?.pause());
+  set("seekbackward", d => recSkip(-(d?.seekOffset || SKIP_SECONDS)));
+  set("seekforward", d => recSkip(d?.seekOffset || SKIP_SECONDS));
+  set("seekto", d => { if (rec.el && Number.isFinite(d?.seekTime)) rec.el.currentTime = d.seekTime; });
+  set("previoustrack", null);
+  set("nexttrack", null);
+}
+function recMetadata(ref) {
+  if (typeof MediaMetadata === "undefined" || !navigator.mediaSession) return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: ref, artist: `ESV · Day ${state.day}`, album: "Grant Horner reading plan",
+    artwork: [{ src: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }]
+  });
+}
+function recSessionState(value) { try { navigator.mediaSession.playbackState = value; } catch { /* unsupported */ } }
+function recPositionState() {
+  const el = rec.el;
+  if (!el || !Number.isFinite(el.duration) || !navigator.mediaSession?.setPositionState) return;
+  try { navigator.mediaSession.setPositionState({ duration: el.duration, position: Math.min(el.currentTime, el.duration), playbackRate: el.playbackRate }); }
+  catch { /* ignore */ }
+}
+
+// What the dock and the hero show, whether or not anything is playing yet.
+function recView() {
+  const active = rec.queue.length > 0;
+  const place = active ? null : savedPlace();
+  const queue = active ? rec.queue : listenQueue(state, place?.index ?? 0);
+  if (!queue.length) return null;
+  const pos = active ? rec.pos : 0;
+  const index = queue[pos];
+  const ref = refAt(index);
+  const into = active ? recCurrentSeconds() : Math.max(0, (place?.seconds || 0) - RESUME_REWIND);
+  const lengths = queue.map(i => recLength(refAt(i)));
+  const line = queueTimeline(lengths);
+  const length = (active && Number.isFinite(rec.el?.duration) ? rec.el.duration : null) || lengths[pos];
+  const doneCount = PLAN.filter((_, i) => isDone(state, i)).length;
+  return {
+    active, place, queue, pos, index, ref, into, line, length,
+    playing: active && rec.el && !rec.el.paused && !rec.error,
+    reading: doneCount + 1,
+    elapsed: line.complete ? line.starts[pos] + into : into,
+    total: line.complete ? line.total : length,
+    leftToday: line.complete ? line.total - (line.starts[pos] + into) : null
+  };
+}
+function heroListenHtml() {
+  const v = useRecording() ? recView() : null;
+  if (!v || (!v.active && !v.place)) return `<button id="heroListen" class="hero-btn listen" onclick="speakAll()">Listen</button>`;
+  const filled = v.total ? Math.min(100, (v.elapsed / v.total) * 100) : 0;
+  const sub = `${esc(v.ref)}${v.leftToday !== null ? `<span class="hero-left"> · ${Math.ceil(v.leftToday / 60)} min left</span>` : ""}`;
+  const label = v.playing ? "Playing" : "Resume";
+  const action = v.playing ? "openAudioDock()" : "listenResumeOrContinue()";
+  return `<button id="heroListen" class="hero-btn listen has-sub" onclick="${action}">${label}<small>${sub}</small><span class="hero-bar"><i style="width:${filled.toFixed(1)}%"></i></span></button>`;
+}
+function openAudioDock() { audio.open = true; renderAudioPlayer(); }
+function listenResumeOrContinue() { return rec.queue.length ? recResume() : listenResume(); }
+function recDockHtml() {
+  const v = recView();
+  const credit = `<p class="audio-credit">ESV® audio © Crossway · <a href="https://www.esv.org" target="_blank" rel="noopener">esv.org</a></p>`;
+  const head = (title, line) => `<button class="audio-tab" onclick="toggleAudioOpen()">Hide</button><div class="audio-shell"><div class="audio-topline"><div><p class="eyebrow">ESV recording${v?.playing ? "" : v?.active || v?.place ? " · paused" : ""}</p><h3>${esc(title)}</h3><span id="audioNowPlaying">${line}</span></div></div>`;
+  if (!v) return `<section id="audioDock" class="audio-dock" aria-label="Audio player">${head("All done", "Every chapter for today is marked done.")}<div class="audio-body">${credit}</div></div></section>`;
+  const chapterLeft = v.length ? `${timeLeftPhrase(v.length - v.into)} left in this chapter` : "Loading length…";
+  const notice = rec.error === "lost"
+    ? `<p class="audio-notice" role="alert">Lost the connection. Your place is saved. Press Play when you have signal.</p>`
+    : rec.buffering && v.playing ? `<p class="audio-notice is-soft">Buffering…</p>` : "";
+  const max = Math.max(1, Math.floor(v.total || 0));
+  const marks = v.line.complete && v.queue.length > 1
+    ? v.line.starts.map((start, p) => `<button class="audio-mark" style="left:${(start / max) * 100}%" title="${esc(refAt(v.queue[p]))}" aria-label="Jump to ${esc(refAt(v.queue[p]))}" onclick="recJumpTo(${p})"></button>`).join("")
+    : "";
+  const scrubber = `<div class="scrubber-wrap"><input class="scrubber" id="recScrubber" type="range" min="0" max="${max}" step="1" value="${Math.floor(v.elapsed)}" ${v.active && v.total ? "" : "disabled"} aria-label="Playback position" onpointerdown="beginScrub()" oninput="previewRecSeek(this.value)" onchange="commitSeek(this.value)" onpointercancel="cancelScrub()" style="--played:${v.total ? ((v.elapsed / v.total) * 100).toFixed(2) : 0}%"><div class="audio-marks">${marks}</div></div>`;
+  const meta = `<div class="audio-meta"><span id="recElapsed">${formatClock(v.elapsed)}${v.total ? ` of ${formatClock(v.total)}` : ""}</span><span id="recLeft">${v.leftToday !== null ? `${Math.ceil(v.leftToday / 60)} min left today` : ""}</span></div>`;
+  const controls = v.playing
+    ? `<div class="audio-controls"><button onclick="recSkip(-${SKIP_SECONDS})" aria-label="Back ${SKIP_SECONDS} seconds">−${SKIP_SECONDS}s</button><button onclick="stepAudio(-1)" aria-label="Previous chapter">◀ Chapter</button><button class="audio-primary" onclick="pauseAudio()">Pause</button><button onclick="stepAudio(1)" aria-label="Next chapter">Chapter ▶</button><button onclick="recSkip(${SKIP_SECONDS})" aria-label="Forward ${SKIP_SECONDS} seconds">+${SKIP_SECONDS}s</button></div>`
+    : v.active || v.place
+      ? `<div class="audio-controls"><button class="audio-ghost" onclick="listenStartOver()">Start ${esc(v.ref)} over</button><button class="audio-primary" onclick="listenResumeOrContinue()">Resume from ${formatClock(v.into)}</button></div>`
+      : `<div class="audio-controls"><button class="audio-primary" onclick="listenToday()">${v.queue.length === PLAN.length ? "Listen to all ten" : `Listen to the ${v.queue.length} left`}</button></div>`;
+  return `<section id="audioDock" class="audio-dock" aria-label="Audio player">${head(v.ref, `Reading ${v.reading} of ${PLAN.length} · <span id="recChapterLeft">${chapterLeft}</span>`)}<div class="audio-body">${notice}${scrubber}${meta}${controls}${credit}</div></div></section>`;
+}
+function recJumpTo(pos) { if (pos === rec.pos) { rec.el.currentTime = 0; return; } recLoad(pos); recPlay(); }
+function previewRecSeek(value) {
+  const v = recView();
+  if (!v?.total) return;
+  const bar = document.getElementById("recScrubber");
+  if (bar) bar.style.setProperty("--played", `${((value / v.total) * 100).toFixed(2)}%`);
+  const elapsed = document.getElementById("recElapsed");
+  if (elapsed) elapsed.textContent = `${formatClock(value)} of ${formatClock(v.total)}`;
+}
+// Progress is painted in place, at most once a second; rebuilding the dock that
+// often would fight a finger on the scrubber.
+function recPaint(force) {
+  const now = Date.now();
+  if (!force && now - rec.lastPaint < 1000) return;
+  rec.lastPaint = now;
+  if (scrubbing) return;
+  const v = recView();
+  if (!v || !document.getElementById("recScrubber")) return renderAudioPlayer();
+  const bar = document.getElementById("recScrubber");
+  bar.value = Math.floor(v.elapsed);
+  bar.style.setProperty("--played", `${v.total ? ((v.elapsed / v.total) * 100).toFixed(2) : 0}%`);
+  const elapsed = document.getElementById("recElapsed");
+  if (elapsed) elapsed.textContent = `${formatClock(v.elapsed)}${v.total ? ` of ${formatClock(v.total)}` : ""}`;
+  const left = document.getElementById("recLeft");
+  if (left) left.textContent = v.leftToday !== null ? `${Math.ceil(v.leftToday / 60)} min left today` : "";
+  const chapterLeft = document.getElementById("recChapterLeft");
+  if (chapterLeft && v.length) chapterLeft.textContent = `${timeLeftPhrase(v.length - v.into)} left in this chapter`;
+}
+if (typeof window !== "undefined") {
+  addEventListener("pagehide", () => recSave(true));
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") recSave(true); });
+}
+
 function render() {
   currentTranslation = state.translation || "KJV";
   const readings = currentReadings();
@@ -830,10 +1264,10 @@ function render() {
   const done = readings.filter(r => isDone(state, r.index));
   const imported = state.importedNames || [];
   $("#app").innerHTML = `
-    <section class="hero"><div class="seal">PGH</div><div><p class="eyebrow">Unofficial reading-plan tool</p><h1>Professor Grant Horner Bible Reading Plan</h1><p class="sub">Ten rotating chapter lists, local progress, KJV text, optional bring-your-own Bible import, and browser read-aloud.</p></div><div class="hero-side"><button class="dayplate" onclick="setDay()" aria-label="Current day ${state.day}. Change day"><span>Current day</span><strong>${state.day}</strong><em>tap to edit</em></button><div class="hero-buttons"><button class="hero-btn read" onclick="scrollToReader()">Read</button><button class="hero-btn listen" onclick="speakAll()">Listen</button></div></div></section>
+    <section class="hero"><div class="seal">PGH</div><div><p class="eyebrow">Unofficial reading-plan tool</p><h1>Professor Grant Horner Bible Reading Plan</h1><p class="sub">Ten rotating chapter lists, local progress, KJV text, optional bring-your-own Bible import, and browser read-aloud.</p></div><div class="hero-side"><button class="dayplate" onclick="setDay()" aria-label="Current day ${state.day}. Change day"><span>Current day</span><strong>${state.day}</strong><em>tap to edit</em></button><div class="hero-buttons"><button class="hero-btn read" onclick="scrollToReader()">Read</button>${heroListenHtml()}</div></div></section>
     <section class="notice"><strong>Unofficial.</strong> Not affiliated with or endorsed by Professor Grant Horner, The Lockman Foundation, or any Bible publisher. Included text is KJV; imported Bible files stay in your browser.</section>
     <section class="actions"><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button><button onclick="copyReadings()">Copy readings</button><button onclick="exportData()">Export</button><label class="button">Import progress <input type="file" accept="application/json" onchange="importData(this.files[0])"></label><button onclick="resetPlan()">Reset</button>${themeButtonHtml()}</section>
-    <section class="settings"><div><label>Translation <select onchange="state.translation=this.value; saveState()"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Text <select onchange="setTextLayout(this.value)"><option value="verses" ${state.textLayout === "flow" ? "" : "selected"}>Verse by verse</option><option value="flow" ${state.textLayout === "flow" ? "selected" : ""}>Flowing</option></select></label><label class="check"><input type="checkbox" ${state.verseNumbers ? "checked" : ""} onchange="setVerseNumbers(this.checked)"> Verse numbers</label></div><div><label>Voice <select id="voiceSelect" onchange="setVoice(this.value)">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="${rate()}" oninput="this.nextElementSibling.textContent=rateLabel(this.value)" onchange="setRate(this.value)"><output class="rate-value">${rateLabel(rate())}</output></label></div></section>
+    <section class="settings"><div><label>Translation <select onchange="setTranslation(this.value)"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Text <select onchange="setTextLayout(this.value)"><option value="verses" ${state.textLayout === "flow" ? "" : "selected"}>Verse by verse</option><option value="flow" ${state.textLayout === "flow" ? "selected" : ""}>Flowing</option></select></label><label class="check"><input type="checkbox" ${state.verseNumbers ? "checked" : ""} onchange="setVerseNumbers(this.checked)"> Verse numbers</label></div><div><label>Voice <select id="voiceSelect" onchange="setVoice(this.value)">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="${rate()}" oninput="this.nextElementSibling.textContent=rateLabel(this.value)" onchange="setRate(this.value)"><output class="rate-value">${rateLabel(rate())}</output></label><label class="check"><input type="checkbox" ${state.keepPlaying ? "checked" : ""} onchange="setKeepPlaying(this.checked)"> Keep playing into the next chapter</label></div></section>
     ${doneStripHtml(done)}
     <section class="grid${firstRender ? " intro" : ""}">${open.map(r => card(r.list, r.index)).join("")}</section>
     <section class="reader" id="reader"><div class="reader-head"><p class="eyebrow">${esc(currentTranslation)} chapter text</p><h2>${open.length === readings.length ? "Today’s ten chapters" : `${open.length} of ten left`}</h2></div>${open.length ? open.map(chapterPanel).join("") : `<div class="all-done"><p>All ten chapters read.</p><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button></div>`}</section>
@@ -841,6 +1275,7 @@ function render() {
     ${audioPlayerHtml()}`;
   firstRender = false;
   chaptersReady = loadChapters(open);
+  if (useRecording()) resolveEsvAudio(readings.map(r => refText(r.current)));
 }
 function doneStripHtml(done) {
   if (!done.length) return "";
@@ -880,6 +1315,7 @@ if (typeof module !== "undefined") {
     nextThemeOverride, upcomingSlugs,
     voiceOptionsHtml, clampRate, pickVoice,
     normalizeImportedChapter, normalizeVerses, withoutBlankVerses, verseHtml, parseProgressFile, parseBibleFile,
+    isEsvTranslation, listenQueue, validResume, queueTimeline, formatClock, timeLeftPhrase, ESV_VOICE,
     loadKjvChapter
   };
 }

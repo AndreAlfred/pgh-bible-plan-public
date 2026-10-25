@@ -100,3 +100,32 @@ input[type=range]{accent-color:var(--rust)}
 .flow .vnum:first-child{margin-left:0}
 .settings label.check{display:inline-flex;align-items:center;gap:8px;cursor:pointer}
 .settings label.check input{width:20px;height:20px;margin:0;accent-color:var(--rust);cursor:pointer}
+
+/* ESV recorded audio */
+.hero-btn.has-sub{display:grid;justify-items:center;gap:3px;line-height:1.05}
+.hero-btn.has-sub small{font-family:Cardo,Georgia,serif;font-weight:400;font-size:.78rem;opacity:.85;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hero-bar{display:block;width:78%;height:4px;margin-top:3px;border-radius:9px;background:rgba(36,24,15,.18);overflow:hidden}
+.hero-bar i{display:block;height:100%;background:var(--ink);border-radius:9px}
+.audio-controls .audio-ghost{background:transparent;border-color:rgba(255,248,234,.35)}
+.audio-controls .audio-primary:only-child{flex:1 1 auto}
+.audio-notice{margin:0 0 12px;padding:9px 12px;border-radius:12px;background:rgba(141,50,29,.55);border:1px solid rgba(255,248,234,.2);color:#fbe9d0;font-size:.92rem}
+.audio-notice.is-soft{background:rgba(255,248,234,.08);color:#d9caaa}
+.audio-credit{margin:12px 0 0;text-align:center;font-size:.76rem;color:#bfae8c}
+.audio-credit a{color:#e3c88a}
+[data-theme=dark] .hero-bar{background:rgba(27,20,14,.25)}
+[data-theme=dark] .hero-bar i{background:#1b140e}
+[data-theme=dark] .audio-controls .audio-ghost{background:transparent;border-color:rgba(239,226,198,.3)}
+@media(max-width:620px){.hero-btn.has-sub .hero-left{display:none}}
+/* The generic dark rules for buttons and range inputs outrank the player's own. */
+[data-theme=dark] input.scrubber{background:linear-gradient(90deg,var(--gold) var(--played),rgba(239,226,198,.2) 0)}
+[data-theme=dark] button.audio-mark{background:rgba(239,226,198,.9);box-shadow:0 0 0 2px #18110b}
+[data-theme=dark] button.audio-mark:hover{background:var(--gold)}
+
+/* Stack the slider and its chapter markers in one centred cell, so the markers sit on
+   the track whatever height the browser gives a range input. */
+.scrubber-wrap{display:grid;align-items:center}
+.scrubber-wrap>*{grid-area:1/1}
+.scrubber-wrap .scrubber{margin:0}
+.scrubber-wrap .audio-marks{position:relative;top:auto;height:8px}
+/* `select,input[type=range]` paints a solid background that outranks .scrubber. */
+input.scrubber{background:linear-gradient(90deg,var(--gold) var(--played),rgba(255,248,234,.2) 0)}
