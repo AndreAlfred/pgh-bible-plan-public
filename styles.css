@@ -93,3 +93,10 @@
 [data-theme=dark] .dayplate,[data-theme=dark] .dayplate:hover,[data-theme=dark] .audio-tab,[data-theme=dark] .audio-tab:hover{background:var(--ink);color:var(--vellum)}
 .primary:hover{background:#31543f}
 input[type=range]{accent-color:var(--rust)}
+
+/* Reading layout: flowing text and the verse-number toggle */
+.flow{margin:0;text-wrap:pretty}
+.flow .vnum{margin:0 .22em 0 .12em;color:var(--rust);font-family:Fraunces,serif;font-size:.56em;font-weight:700;line-height:0;vertical-align:.62em}
+.flow .vnum:first-child{margin-left:0}
+.settings label.check{display:inline-flex;align-items:center;gap:8px;cursor:pointer}
+.settings label.check input{width:20px;height:20px;margin:0;accent-color:var(--rust);cursor:pointer}

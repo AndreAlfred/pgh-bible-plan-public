@@ -75,11 +75,19 @@ function positionsForDay(day) {
   return PLAN.map((list, i) => (indexOfRef(list, START[i]) + offset) % list.chapters.length);
 }
 function initialState() {
-  return { day: 1, positions: positionsForDay(1), done: {}, translation: "KJV", history: [], importedNames: [], voice: "", rate: 1 };
+  return { day: 1, positions: positionsForDay(1), done: {}, translation: "KJV", history: [], importedNames: [], voice: "", rate: 1, textLayout: "verses", verseNumbers: true };
 }
 // A position past the end of its list makes render() throw, and because the bad
 // state is already saved, the page would stay blank on every reload.
 const validDay = day => Number.isInteger(day) && day >= 1;
+const TEXT_LAYOUTS = ["verses", "flow"];
+// Reading preferences are cosmetic, so a bad value falls back to the default rather
+// than rejecting the saved state or backup it came in.
+const withValidTextPrefs = st => ({
+  ...st,
+  textLayout: TEXT_LAYOUTS.includes(st.textLayout) ? st.textLayout : "verses",
+  verseNumbers: typeof st.verseNumbers === "boolean" ? st.verseNumbers : true
+});
 const validPositions = positions => Array.isArray(positions) && positions.length === PLAN.length &&
   positions.every((p, i) => Number.isInteger(p) && p >= 0 && p < PLAN[i].chapters.length);
 function loadState() {
@@ -88,7 +96,7 @@ function loadState() {
   catch { return initialState(); }
   if (!validDay(saved.day)) return initialState();
   if (!validPositions(saved.positions)) saved.positions = positionsForDay(saved.day);
-  return saved;
+  return withValidTextPrefs(saved);
 }
 function persistState() {
   // Private tabs deny writes. Losing progress is survivable; throwing here is not,
@@ -350,9 +358,16 @@ async function getChapter(ch) {
   }
   return loadKjvChapter(slug(ch));
 }
-function verseHtml(chapter) {
-  return chapter.verses.map(v => `<p class="verse"><sup>${v.v}</sup><span>${esc(v.t)}</span></p>`).join("");
+// "flow" runs a chapter together like a printed Bible. Neither the bundled KJV nor the
+// import format records paragraph breaks, so a flowing chapter is one paragraph.
+function verseHtml(chapter, { layout = "verses", numbers = true } = {}) {
+  if (layout === "flow") {
+    const run = chapter.verses.map(v => `${numbers ? `<sup class="vnum">${v.v}</sup>` : ""}${esc(v.t)}`).join(" ");
+    return `<p class="flow">${run}</p>`;
+  }
+  return chapter.verses.map(v => `<p class="verse">${numbers ? `<sup>${v.v}</sup>` : ""}<span>${esc(v.t)}</span></p>`).join("");
 }
+const textPrefs = st => ({ layout: st.textLayout, numbers: st.verseNumbers });
 async function loadChapters(readings) {
   const token = ++renderToken;
   await Promise.all(readings.map(async r => {
@@ -360,7 +375,7 @@ async function loadChapters(readings) {
     if (!el) return;
     try {
       const chapter = await getChapter(r.current);
-      if (token === renderToken) el.innerHTML = verseHtml(chapter);
+      if (token === renderToken) el.innerHTML = verseHtml(chapter, textPrefs(state));
     } catch (err) {
       // fetch() rejects with a TypeError when the network is unreachable; a missing
       // file is our own Error. navigator.onLine alone misses dead Wi-Fi.
@@ -406,7 +421,7 @@ function parseProgressFile(text) {
   if (!validPositions(raw.positions) || !validDay(raw.day ?? 1)) {
     return { ok: false, error: "That progress backup is damaged — its day or reading positions are out of range. Nothing was changed." };
   }
-  return { ok: true, state: { ...initialState(), ...raw } };
+  return { ok: true, state: withValidTextPrefs({ ...initialState(), ...raw }) };
 }
 function parseBibleFile(raw, fallbackName) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -565,6 +580,8 @@ function rate() { return clampRate(state?.rate); }
 const rateLabel = v => `${Number(v).toFixed(2).replace(/0$/, "")}×`;
 function setVoice(name) { state.voice = name; persistState(); }
 function setRate(v) { state.rate = clampRate(v); persistState(); }
+function setTextLayout(layout) { if (TEXT_LAYOUTS.includes(layout)) { state.textLayout = layout; saveState(); } }
+function setVerseNumbers(on) { state.verseNumbers = !!on; saveState(); }
 function buildChapterItems(chapter, label, { announce = false, chapterIndex = 0 } = {}) {
   const items = [];
   if (announce) {
@@ -816,7 +833,7 @@ function render() {
     <section class="hero"><div class="seal">PGH</div><div><p class="eyebrow">Unofficial reading-plan tool</p><h1>Professor Grant Horner Bible Reading Plan</h1><p class="sub">Ten rotating chapter lists, local progress, KJV text, optional bring-your-own Bible import, and browser read-aloud.</p></div><div class="hero-side"><button class="dayplate" onclick="setDay()" aria-label="Current day ${state.day}. Change day"><span>Current day</span><strong>${state.day}</strong><em>tap to edit</em></button><div class="hero-buttons"><button class="hero-btn read" onclick="scrollToReader()">Read</button><button class="hero-btn listen" onclick="speakAll()">Listen</button></div></div></section>
     <section class="notice"><strong>Unofficial.</strong> Not affiliated with or endorsed by Professor Grant Horner, The Lockman Foundation, or any Bible publisher. Included text is KJV; imported Bible files stay in your browser.</section>
     <section class="actions"><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button><button onclick="copyReadings()">Copy readings</button><button onclick="exportData()">Export</button><label class="button">Import progress <input type="file" accept="application/json" onchange="importData(this.files[0])"></label><button onclick="resetPlan()">Reset</button>${themeButtonHtml()}</section>
-    <section class="settings"><div><label>Translation <select onchange="state.translation=this.value; saveState()"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Voice <select id="voiceSelect" onchange="setVoice(this.value)">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="${rate()}" oninput="this.nextElementSibling.textContent=rateLabel(this.value)" onchange="setRate(this.value)"><output class="rate-value">${rateLabel(rate())}</output></label></div></section>
+    <section class="settings"><div><label>Translation <select onchange="state.translation=this.value; saveState()"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Text <select onchange="setTextLayout(this.value)"><option value="verses" ${state.textLayout === "flow" ? "" : "selected"}>Verse by verse</option><option value="flow" ${state.textLayout === "flow" ? "selected" : ""}>Flowing</option></select></label><label class="check"><input type="checkbox" ${state.verseNumbers ? "checked" : ""} onchange="setVerseNumbers(this.checked)"> Verse numbers</label></div><div><label>Voice <select id="voiceSelect" onchange="setVoice(this.value)">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="${rate()}" oninput="this.nextElementSibling.textContent=rateLabel(this.value)" onchange="setRate(this.value)"><output class="rate-value">${rateLabel(rate())}</output></label></div></section>
     ${doneStripHtml(done)}
     <section class="grid${firstRender ? " intro" : ""}">${open.map(r => card(r.list, r.index)).join("")}</section>
     <section class="reader" id="reader"><div class="reader-head"><p class="eyebrow">${esc(currentTranslation)} chapter text</p><h2>${open.length === readings.length ? "Today’s ten chapters" : `${open.length} of ten left`}</h2></div>${open.length ? open.map(chapterPanel).join("") : `<div class="all-done"><p>All ten chapters read.</p><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button></div>`}</section>
@@ -862,7 +879,7 @@ if (typeof module !== "undefined") {
     initialState, loadState, persistState, isDone, withDone, advanceDay,
     nextThemeOverride, upcomingSlugs,
     voiceOptionsHtml, clampRate, pickVoice,
-    normalizeImportedChapter, normalizeVerses, withoutBlankVerses, parseProgressFile, parseBibleFile,
+    normalizeImportedChapter, normalizeVerses, withoutBlankVerses, verseHtml, parseProgressFile, parseBibleFile,
     loadKjvChapter
   };
 }

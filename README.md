@@ -13,6 +13,7 @@ Unofficial public-facing reading-plan tracker for the Professor Grant Horner Bib
 - Export/import progress backup
 - Mark chapters done to hide them; Undo after Complete Day, Reset or import
 - Dark mode that follows the device, with a sun/moon override
+- Text shown verse by verse or flowing as one paragraph per chapter, with verse numbers on or off
 - Works offline: chapters you open, plus the coming week's, are saved on the device
 
 ## Copyright posture

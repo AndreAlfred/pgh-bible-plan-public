@@ -7,3 +7,6 @@ node_modules/
 
 # Copyrighted translation kept for local use only; this repo is public.
 esv.json
+
+# Brainstorming mockups
+.superpowers/
