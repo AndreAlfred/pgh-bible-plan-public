@@ -17,6 +17,8 @@
   label{display:block;margin:6px 0}
   button{font:700 1.05rem Georgia,serif;border:0;border-radius:999px;padding:14px 20px;background:var(--green);color:var(--vellum);width:100%;margin:6px 0}
   button.secondary{background:rgba(36,24,15,.1);color:var(--ink)}
+  #check{margin:12px 0;padding:12px 14px;border-radius:14px;background:#fff8ea;border:1px dashed var(--muted)}
+  button:disabled{opacity:.4}
   #now{margin:12px 0;padding:12px 14px;border-radius:14px;background:var(--ink);color:var(--vellum)}
   #verdict{margin:12px 0;padding:12px 14px;border-radius:14px;background:#fff8ea;border:2px solid var(--gold);font-weight:700}
   #log{font:13px/1.4 ui-monospace,Menlo,monospace;background:#fff8ea;border-radius:12px;padding:10px;max-height:50vh;overflow:auto;white-space:pre-wrap}
@@ -39,7 +41,8 @@
   <label><input type="radio" name="mode" value="B"> <b>B.</b> Two players; the next chapter is loaded in the background</label>
 </fieldset>
 
-<button id="start">Start</button>
+<div id="check">Checking the ESV audio service…</div>
+<button id="start" disabled>Start</button>
 <button id="stop" class="secondary">Stop</button>
 <div id="now">Not playing.</div>
 <div id="verdict">No result yet.</div>
@@ -50,7 +53,27 @@
 <script>
 const CHAPTERS = ["Psalms 133", "Psalms 117", "Psalms 134"];
 const LOG_KEY = "spike.esvAudio.log";
-const url = ref => `/api/esv-audio?ref=${encodeURIComponent(ref)}`;
+// Resolved before Start: iOS only plays inside the tap itself, so no awaiting there.
+const resolved = {};
+const url = ref => resolved[ref];
+async function checkService() {
+  const out = [];
+  for (const ref of CHAPTERS) {
+    try {
+      const r = await fetch(`/api/esv-audio?ref=${encodeURIComponent(ref)}&format=json`, { cache: "no-store" });
+      const type = r.headers.get("content-type") || "";
+      if (!type.includes("json")) { out.push(`${ref}: HTTP ${r.status}, not JSON (the Vercel login may have expired; reload)`); continue; }
+      const body = await r.json();
+      if (body.url) { resolved[ref] = body.url; out.push(`${ref}: OK`); }
+      else out.push(`${ref}: HTTP ${r.status}, ${body.error}`);
+    } catch (err) { out.push(`${ref}: ${err.name} ${err.message}`); }
+  }
+  const ok = CHAPTERS.every(r => resolved[r]);
+  $("check").textContent = (ok ? "ESV service OK, 3 chapters ready." : "Problem reaching the ESV audio:") + "\n" + out.join("\n");
+  $("check").style.whiteSpace = "pre-wrap";
+  $("start").disabled = !ok;
+  log(ok ? "service check OK" : "service check FAILED", out.join(" | "));
+}
 const players = [new Audio(), new Audio()];
 players.forEach(p => { p.preload = "auto"; });
 let run = null; // { mode, index, active, startedAt }
@@ -161,6 +184,7 @@ $("stop").onclick = () => { players.forEach(p => p.pause()); log("stopped by tap
 $("clear").onclick = () => { localStorage.removeItem(LOG_KEY); draw(); };
 document.addEventListener("visibilitychange", () => log(document.visibilityState === "hidden" ? "screen off / left page" : "back on page"));
 draw();
+checkService();
 </script>
 </body>
 </html>
