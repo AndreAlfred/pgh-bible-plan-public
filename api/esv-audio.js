@@ -1,6 +1,7 @@
 // SPIKE (throwaway): turns "Acts 28" into the ESV MP3's address without exposing the
 // API key. The real version validates against the plan's book table; this one only
 // checks the shape, which is enough for a Preview-only test.
+const { createHash } = require("node:crypto");
 const REF = /^(?:[1-3] )?[A-Za-z]+(?: [A-Za-z]+)* \d{1,3}$/;
 
 // ?format=json answers {"url": …} instead of redirecting. iOS loads <audio> through its
@@ -15,7 +16,8 @@ module.exports = async (req, res) => {
   const json = req.query.format === "json";
   const ref = String(req.query.ref || "").trim();
   if (!REF.test(ref)) return fail(res, 400, "Expected one whole chapter, like \"Acts 28\".", json);
-  const key = process.env.ESV_API_KEY;
+  // Forgive the usual paste damage: whitespace, quotes, or a copied "Token " prefix.
+  const key = String(process.env.ESV_API_KEY || "").trim().replace(/^["']|["']$/g, "").replace(/^Token\s+/i, "").trim();
   if (!key) {
     console.error("esv-audio: ESV_API_KEY is not set");
     return fail(res, 503, "Recorded audio isn't configured (no ESV_API_KEY on this deployment).", json);
@@ -34,7 +36,12 @@ module.exports = async (req, res) => {
       return res.status(302).end();
     }
     console.error(`esv-audio: upstream ${upstream.status} for ${ref}`);
-    return fail(res, 502, `The ESV service answered ${upstream.status}.`, json);
+    // SPIKE diagnostic: a short hash shows whether Vercel holds the same key as the
+    // Keychain without revealing it.
+    const hint = upstream.status === 403
+      ? ` Key on server: ${key.length} characters, fingerprint ${createHash("sha256").update(key).digest("hex").slice(0, 8)}.`
+      : "";
+    return fail(res, 502, `The ESV service answered ${upstream.status}.${hint}`, json);
   } catch (err) {
     console.error(`esv-audio: ${err.name} for ${ref}`);
     return fail(res, 502, "Couldn't reach the ESV audio service.", json);
