@@ -132,6 +132,18 @@ function listenQueue(st, start = 0) {
   const order = PLAN.map((_, i) => (start + i) % PLAN.length);
   return order.filter(i => !isDone(st, i));
 }
+// Where the reader is up to: the first unfinished chapter after the furthest card
+// they've finished. A chapter skipped earlier comes round last rather than first.
+function upToIndex(st) {
+  const finished = PLAN.map((_, i) => i).filter(i => isDone(st, i));
+  const queue = listenQueue(st, finished.length ? finished[finished.length - 1] + 1 : 0);
+  return queue.length ? queue[0] : null;
+}
+// The next position in a listening queue after `pos` whose chapter isn't done, or -1.
+function nextUnfinishedPos(st, queue, pos) {
+  for (let p = pos + 1; p < queue.length; p++) if (!isDone(st, queue[p])) return p;
+  return -1;
+}
 // A saved listening place is only good for the same day, translation and chapter,
 // and only while that chapter is still unfinished.
 function validResume(st, saved) {
@@ -209,6 +221,7 @@ function prefetchUpcoming() {
 
 function setDone(i, done) {
   state = withDone(state, i, done);
+  recFollowDone();
   saveState();
 }
 // Done at the end of a passage removes it, which would leave the reader partway into
@@ -1040,7 +1053,12 @@ function recStart(queue, pos = 0, seconds = 0, { single = false } = {}) {
 function listenToday() {
   const place = savedPlace();
   if (place) return listenResume(place);
-  recStart(listenQueue(state));
+  recStart(listenQueue(state, upToIndex(state) ?? 0));
+}
+// The dock's "Jump to" button: start listening from where the reader is up to.
+function listenUpTo() {
+  const target = upToIndex(state);
+  if (target !== null) recStart(listenQueue(state, target));
 }
 function listenResume(place = savedPlace()) {
   if (!place) return listenToday();
@@ -1097,14 +1115,9 @@ function recChapterEnded() {
   // A recording that plays to the end marks its chapter Done, like the Done button.
   state = withDone(state, finished, true);
   persistState();
-  let next = rec.pos + 1;
-  while (next < rec.queue.length && isDone(state, rec.queue[next])) next += 1;
-  if (rec.single || next >= rec.queue.length) {
-    rec.queue = [];
-    audio.driver = "speech";
-    audio.playing = false;
-    try { localStorage.removeItem(LISTEN_KEY); } catch { /* ignore */ }
-    recSessionState("none");
+  const next = nextUnfinishedPos(state, rec.queue, rec.pos);
+  if (rec.single || next === -1) {
+    recEndSession();
     render();
     toast(listenQueue(state).length ? `Finished ${refAt(finished)}.` : "That's all ten chapters for today.");
     return;
@@ -1113,6 +1126,29 @@ function recChapterEnded() {
   recPlay();
   recSave(true);
   render();
+}
+function recEndSession() {
+  rec.queue = [];
+  rec.error = "";
+  audio.driver = "speech";
+  audio.playing = false;
+  try { localStorage.removeItem(LISTEN_KEY); } catch { /* ignore */ }
+  recSessionState("none");
+}
+// A paused chapter that gets marked Done by reading it moves the player on, so
+// Play picks up at the next unfinished chapter instead of one already read. While
+// playing, the chapter carries on and the finished ones are skipped when it ends.
+function recFollowDone() {
+  if (!rec.queue.length || !rec.el || !rec.el.paused || !isDone(state, rec.queue[rec.pos])) return;
+  const next = nextUnfinishedPos(state, rec.queue, rec.pos);
+  if (rec.single || next === -1) {
+    rec.el.removeAttribute("src");
+    rec.el.load();
+    return recEndSession();
+  }
+  rec.error = "";
+  recLoad(next);
+  recSave(true);
 }
 // Back from the first chapter restarts it; forward from the last does nothing.
 function recStepChapter(delta) {
@@ -1172,7 +1208,7 @@ function recPositionState() {
 function recView() {
   const active = rec.queue.length > 0;
   const place = active ? null : savedPlace();
-  const queue = active ? rec.queue : listenQueue(state, place?.index ?? 0);
+  const queue = active ? rec.queue : listenQueue(state, place?.index ?? upToIndex(state) ?? 0);
   if (!queue.length) return null;
   const pos = active ? rec.pos : 0;
   const index = queue[pos];
@@ -1183,7 +1219,7 @@ function recView() {
   const length = (active && Number.isFinite(rec.el?.duration) ? rec.el.duration : null) || lengths[pos];
   const doneCount = PLAN.filter((_, i) => isDone(state, i)).length;
   return {
-    active, place, queue, pos, index, ref, into, line, length,
+    active, place, queue, pos, index, ref, into, line, length, upTo: upToIndex(state),
     playing: active && rec.el && !rec.el.paused && !rec.error,
     reading: doneCount + 1,
     elapsed: line.complete ? line.starts[pos] + into : into,
@@ -1222,7 +1258,10 @@ function recDockHtml() {
     : v.active || v.place
       ? `<div class="audio-controls"><button class="audio-ghost" onclick="listenStartOver()">Start ${esc(v.ref)} over</button><button class="audio-primary" onclick="listenResumeOrContinue()">Resume from ${formatClock(v.into)}</button></div>`
       : `<div class="audio-controls"><button class="audio-primary" onclick="listenToday()">${v.queue.length === PLAN.length ? "Listen to all ten" : `Listen to the ${v.queue.length} left`}</button></div>`;
-  return `<section id="audioDock" class="audio-dock" aria-label="Audio player">${head(v.ref, `Reading ${v.reading} of ${PLAN.length} · <span id="recChapterLeft">${chapterLeft}</span>`)}<div class="audio-body">${notice}${scrubber}${meta}${controls}${credit}</div></div></section>`;
+  const jump = v.upTo !== null && v.upTo !== v.index
+    ? `<div class="audio-controls audio-jump"><button class="audio-ghost" onclick="listenUpTo()" title="The next chapter after the last one you finished">Jump to ${esc(refAt(v.upTo))} →</button></div>`
+    : "";
+  return `<section id="audioDock" class="audio-dock" aria-label="Audio player">${head(v.ref, `Reading ${v.reading} of ${PLAN.length} · <span id="recChapterLeft">${chapterLeft}</span>`)}<div class="audio-body">${notice}${scrubber}${meta}${controls}${jump}${credit}</div></div></section>`;
 }
 function recJumpTo(pos) { if (pos === rec.pos) { rec.el.currentTime = 0; return; } recLoad(pos); recPlay(); }
 function previewRecSeek(value) {
@@ -1315,7 +1354,7 @@ if (typeof module !== "undefined") {
     nextThemeOverride, upcomingSlugs,
     voiceOptionsHtml, clampRate, pickVoice,
     normalizeImportedChapter, normalizeVerses, withoutBlankVerses, verseHtml, parseProgressFile, parseBibleFile,
-    isEsvTranslation, listenQueue, validResume, queueTimeline, formatClock, timeLeftPhrase, ESV_VOICE,
+    isEsvTranslation, listenQueue, upToIndex, nextUnfinishedPos, validResume, queueTimeline, formatClock, timeLeftPhrase, ESV_VOICE,
     loadKjvChapter
   };
 }

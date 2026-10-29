@@ -3,7 +3,7 @@ const assert = require("node:assert");
 
 const {
   PLAN, initialState, withDone, positionsForDay, parseProgressFile, voiceOptionsHtml,
-  isEsvTranslation, listenQueue, validResume, queueTimeline, formatClock, timeLeftPhrase, ESV_VOICE
+  isEsvTranslation, listenQueue, upToIndex, nextUnfinishedPos, validResume, queueTimeline, formatClock, timeLeftPhrase, ESV_VOICE
 } = require("../app.js");
 
 const day = n => ({ ...initialState(), day: n, positions: positionsForDay(n), translation: "ESV" });
@@ -19,6 +19,30 @@ test("the listening queue skips done chapters and wraps round from a starting ca
   assert.deepStrictEqual(listenQueue(st), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
   st = withDone(withDone(st, 1, true), 7, true);
   assert.deepStrictEqual(listenQueue(st, 5), [5, 6, 8, 9, 0, 2, 3, 4]);
+});
+
+test("'up to' is the first unfinished chapter after the furthest one finished", () => {
+  let st = day(1);
+  assert.strictEqual(upToIndex(st), 0);
+  // Listened to the Gospels and Numbers, then read Paul through Wisdom: Psalms is next.
+  for (const i of [0, 1, 2, 3, 4]) st = withDone(st, i, true);
+  assert.strictEqual(upToIndex(st), 5);
+  // A card skipped earlier doesn't pull you back; it comes round after Acts.
+  st = withDone(withDone(day(1), 1, true), 4, true);
+  assert.strictEqual(upToIndex(st), 5);
+  st = withDone(st, 9, true);
+  assert.strictEqual(upToIndex(st), 0);
+  for (let i = 0; i < 10; i++) st = withDone(st, i, true);
+  assert.strictEqual(upToIndex(st), null);
+});
+
+test("the next unfinished position in a queue skips chapters read in the meantime", () => {
+  let st = day(1);
+  const queue = listenQueue(st, 1); // paused on Numbers, the second card
+  for (const i of [1, 2, 3, 4]) st = withDone(st, i, true);
+  assert.strictEqual(queue[nextUnfinishedPos(st, queue, 0)], 5);
+  for (let i = 0; i < 10; i++) st = withDone(st, i, true);
+  assert.strictEqual(nextUnfinishedPos(st, queue, 0), -1);
 });
 
 test("a saved place is used only for the same day, translation and unfinished chapter", () => {

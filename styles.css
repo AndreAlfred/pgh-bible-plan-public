@@ -108,6 +108,7 @@ input[type=range]{accent-color:var(--rust)}
 .hero-bar i{display:block;height:100%;background:var(--ink);border-radius:9px}
 .audio-controls .audio-ghost{background:transparent;border-color:rgba(255,248,234,.35)}
 .audio-controls .audio-primary:only-child{flex:1 1 auto}
+.audio-jump{margin-top:8px}.audio-jump .audio-ghost{flex:1 1 auto}
 .audio-notice{margin:0 0 12px;padding:9px 12px;border-radius:12px;background:rgba(141,50,29,.55);border:1px solid rgba(255,248,234,.2);color:#fbe9d0;font-size:.92rem}
 .audio-notice.is-soft{background:rgba(255,248,234,.08);color:#d9caaa}
 .audio-credit{margin:12px 0 0;text-align:center;font-size:.76rem;color:#bfae8c}
