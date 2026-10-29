@@ -165,6 +165,8 @@ function formatClock(totalSeconds) {
   const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = String(t % 60).padStart(2, "0");
   return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
 }
+// Recording time is measured at 1×; what's left in real minutes depends on the speed.
+const atSpeed = (seconds, speed) => seconds / clampRate(speed);
 function timeLeftPhrase(seconds) {
   const t = Math.max(0, Math.round(seconds || 0));
   if (t < 60) return `${t} sec`;
@@ -646,6 +648,7 @@ function setRate(v) {
   state.rate = clampRate(v);
   if (rec.el) { rec.el.defaultPlaybackRate = rate(); rec.el.playbackRate = rate(); }
   persistState();
+  refreshListenUi();
 }
 function setKeepPlaying(on) { state.keepPlaying = !!on; persistState(); }
 // A queue built for one translation or driver mustn't linger in the dock for another.
@@ -1223,7 +1226,8 @@ function recView() {
     reading: doneCount + 1,
     elapsed: line.complete ? line.starts[pos] + into : into,
     total: line.complete ? line.total : length,
-    leftToday: line.complete ? line.total - (line.starts[pos] + into) : null
+    chapterLeft: length ? atSpeed(length - into, rate()) : null,
+    leftToday: line.complete ? atSpeed(line.total - (line.starts[pos] + into), rate()) : null
   };
 }
 function heroListenHtml() {
@@ -1242,7 +1246,7 @@ function recDockHtml() {
   const credit = `<p class="audio-credit">ESV® audio © Crossway · <a href="https://www.esv.org" target="_blank" rel="noopener">esv.org</a></p>`;
   const head = (title, line) => `<button class="audio-tab" onclick="toggleAudioOpen()">Hide</button><div class="audio-shell"><div class="audio-topline"><div><p class="eyebrow">ESV recording${v?.playing ? "" : v?.active || v?.place ? " · paused" : ""}</p><h3>${esc(title)}</h3><span id="audioNowPlaying">${line}</span></div></div>`;
   if (!v) return `<section id="audioDock" class="audio-dock" aria-label="Audio player">${head("All done", "Every chapter for today is marked done.")}<div class="audio-body">${credit}</div></div></section>`;
-  const chapterLeft = v.length ? `${timeLeftPhrase(v.length - v.into)} left in this chapter` : "Loading length…";
+  const chapterLeft = v.chapterLeft !== null ? `${timeLeftPhrase(v.chapterLeft)} left in this chapter` : "Loading length…";
   const notice = rec.error === "lost"
     ? `<p class="audio-notice" role="alert">Lost the connection. Your place is saved. Press Play when you have signal.</p>`
     : rec.buffering && v.playing ? `<p class="audio-notice is-soft">Buffering…</p>` : "";
@@ -1288,7 +1292,7 @@ function recPaint(force) {
   const left = document.getElementById("recLeft");
   if (left) left.textContent = v.leftToday !== null ? `${Math.ceil(v.leftToday / 60)} min left today` : "";
   const chapterLeft = document.getElementById("recChapterLeft");
-  if (chapterLeft && v.length) chapterLeft.textContent = `${timeLeftPhrase(v.length - v.into)} left in this chapter`;
+  if (chapterLeft && v.chapterLeft !== null) chapterLeft.textContent = `${timeLeftPhrase(v.chapterLeft)} left in this chapter`;
 }
 if (typeof window !== "undefined") {
   addEventListener("pagehide", () => recSave(true));
@@ -1370,7 +1374,7 @@ if (typeof module !== "undefined") {
     nextThemeOverride, upcomingSlugs,
     voiceOptionsHtml, clampRate, pickVoice,
     normalizeImportedChapter, normalizeVerses, withoutBlankVerses, verseHtml, parseProgressFile, parseBibleFile,
-    isEsvTranslation, listenQueue, upToIndex, nextUnfinishedPos, validResume, queueTimeline, formatClock, timeLeftPhrase, ESV_VOICE,
+    isEsvTranslation, listenQueue, upToIndex, nextUnfinishedPos, validResume, queueTimeline, formatClock, timeLeftPhrase, atSpeed, ESV_VOICE,
     loadKjvChapter
   };
 }

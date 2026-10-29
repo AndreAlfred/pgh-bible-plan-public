@@ -3,7 +3,7 @@ const assert = require("node:assert");
 
 const {
   PLAN, initialState, withDone, positionsForDay, parseProgressFile, voiceOptionsHtml,
-  isEsvTranslation, listenQueue, upToIndex, nextUnfinishedPos, validResume, queueTimeline, formatClock, timeLeftPhrase, ESV_VOICE
+  isEsvTranslation, listenQueue, upToIndex, nextUnfinishedPos, validResume, queueTimeline, formatClock, timeLeftPhrase, atSpeed, ESV_VOICE
 } = require("../app.js");
 
 const day = n => ({ ...initialState(), day: n, positions: positionsForDay(n), translation: "ESV" });
@@ -72,6 +72,14 @@ test("times read naturally", () => {
   assert.strictEqual(timeLeftPhrase(160), "2 min 40 sec");
   assert.strictEqual(timeLeftPhrase(120), "2 min");
   assert.strictEqual(timeLeftPhrase(41.2), "41 sec");
+});
+
+test("time left is real listening time at the chosen speed", () => {
+  assert.strictEqual(atSpeed(600, 1), 600);
+  assert.strictEqual(atSpeed(600, 1.5), 400);
+  assert.strictEqual(atSpeed(600, 0.75), 800);
+  assert.strictEqual(atSpeed(600, "junk"), 600);
+  assert.strictEqual(atSpeed(600, 9), 400); // clamped to the slider's 1.5× top
 });
 
 test("ESV readers are offered the recording first in the voice menu", () => {
