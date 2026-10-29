@@ -38,7 +38,6 @@ const DB_VERSION = 1;
 let state = null;
 let currentTranslation = "KJV";
 let renderToken = 0;
-let firstRender = true;
 // Settles once the chapters drawn by the latest render have their text.
 let chaptersReady = Promise.resolve();
 let voices = [];
@@ -1308,11 +1307,10 @@ function render() {
     <section class="actions"><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button><button onclick="copyReadings()">Copy readings</button><button onclick="exportData()">Export</button><label class="button">Import progress <input type="file" accept="application/json" onchange="importData(this.files[0])"></label><button onclick="resetPlan()">Reset</button>${themeButtonHtml()}</section>
     <section class="settings"><div><label>Translation <select onchange="setTranslation(this.value)"><option ${currentTranslation === "KJV" ? "selected" : ""}>KJV</option>${imported.map(n => `<option ${n === currentTranslation ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label><label class="button">Bring your own Bible JSON <input type="file" accept="application/json" onchange="importBibleJson(this.files[0])"></label><button class="info-btn" onclick="toggleImportHelp()" aria-expanded="${importHelpOpen}" aria-controls="importHelp" aria-label="Bible JSON format help" title="Bible JSON format help">i</button></div>${importHelpHtml()}<div><label>Text <select onchange="setTextLayout(this.value)"><option value="verses" ${state.textLayout === "flow" ? "" : "selected"}>Verse by verse</option><option value="flow" ${state.textLayout === "flow" ? "selected" : ""}>Flowing</option></select></label><label class="check"><input type="checkbox" ${state.verseNumbers ? "checked" : ""} onchange="setVerseNumbers(this.checked)"> Verse numbers</label></div><div><label>Voice <select id="voiceSelect" onchange="setVoice(this.value)">${voiceOptions()}</select></label><label>Speed <input id="rateRange" type="range" min="0.75" max="1.5" step="0.05" value="${rate()}" oninput="this.nextElementSibling.textContent=rateLabel(this.value)" onchange="setRate(this.value)"><output class="rate-value">${rateLabel(rate())}</output></label><label class="check"><input type="checkbox" ${state.keepPlaying ? "checked" : ""} onchange="setKeepPlaying(this.checked)"> Keep playing into the next chapter</label></div></section>
     ${doneStripHtml(done)}
-    <section class="grid${firstRender ? " intro" : ""}">${open.map(r => card(r.list, r.index)).join("")}</section>
+    ${listsHtml(readings)}
     <section class="reader" id="reader"><div class="reader-head"><p class="eyebrow">${esc(currentTranslation)} chapter text</p><h2>${open.length === readings.length ? "Today’s ten chapters" : `${open.length} of ten left`}</h2></div>${open.length ? open.map(chapterPanel).join("") : `<div class="all-done"><p>All ten chapters read.</p><button class="primary" onclick="completeDay()">Complete Day ${state.day}</button></div>`}</section>
     <section class="history"><h2>Recent completed days</h2>${state.history.length ? state.history.slice(0, 12).map(h => `<details><summary>Day ${h.day} · ${new Date(h.date).toLocaleDateString()}</summary><ol>${h.readings.map(r => `<li>${esc(r.ref)}</li>`).join("")}</ol></details>`).join("") : `<p>No completed days logged yet.</p>`}</section>
     ${audioPlayerHtml()}`;
-  firstRender = false;
   chaptersReady = loadChapters(open);
   if (useRecording()) resolveEsvAudio(readings.map(r => refText(r.current)));
 }
@@ -1320,11 +1318,29 @@ function doneStripHtml(done) {
   if (!done.length) return "";
   return `<section class="done-strip"><span>Done today</span>${done.map(r => `<button onclick="setDone(${r.index}, false)" title="Show ${esc(refText(r.current))} again" aria-label="Undo done: ${esc(refText(r.current))}"><s>${esc(refText(r.current))}</s> <i>↺</i></button>`).join("")}</section>`;
 }
-function card(list, i) {
-  const current = list.chapters[state.positions[i]];
-  const next = list.chapters[(state.positions[i] + 1) % list.chapters.length];
+// The ten lists, folded away by default: reading happens in order in the reader below,
+// which already has each chapter's Play and Done buttons. What's left here is how far
+// through each list you are, and Adjust for moving a list by hand. Open state lives
+// in JS because render() rebuilds the page.
+let listsOpen = false;
+let adjusting = null;
+function listsHtml(readings = currentReadings()) {
+  const left = readings.filter(r => !isDone(state, r.index)).length;
+  return `<details class="lists" id="lists"${listsOpen ? " open" : ""} ontoggle="listsOpen = this.open"><summary><span class="lists-title">The ten lists</span><span class="lists-sub">${left ? `${left} of ten left today` : "All ten read today"}<span class="lists-hint"> · progress and adjust</span></span></summary><ol class="list-rows">${readings.map(listRow).join("")}</ol></details>`;
+}
+function listRow({ list, index: i, current, next }) {
+  const p = pct(state.positions[i], list.chapters.length);
+  const ref = esc(refText(current));
+  const open = adjusting === i;
   const books = [...new Set(list.chapters.map(ch => ch.book))];
-  return `<article class="card" style="--delay:${i * 45}ms"><div class="num">List ${list.id}</div><div class="meter" style="--p:${pct(state.positions[i], list.chapters.length)}"><span>${pct(state.positions[i], list.chapters.length)}%</span></div><h2>${esc(refText(current))}</h2><p>${esc(list.name)} · ${list.chapters.length} days · next: ${esc(refText(next))}</p><div class="tools"><button onclick="scrollToChapter(${i})">Read</button><button onclick="speakChapter(${i})">Audio</button><button class="done-btn" onclick="setDone(${i}, true)">✓ Done</button></div><details><summary>Adjust</summary><div class="tools nudge"><button onclick="move(${i},-1)">← Previous</button><button onclick="move(${i},1)">Next →</button></div><div class="editrow"><select onchange="this.nextElementSibling.max=BOOKS[this.value]">${books.map(b => `<option ${b === current.book ? "selected" : ""}>${esc(b)}</option>`).join("")}</select><input type="number" min="1" max="${BOOKS[current.book]}" value="${current.chapter}"><button onclick="setReference(${i}, this.parentElement.children[0].value, this.parentElement.children[1].value)">Set</button></div></details></article>`;
+  const adjust = open ? `<div class="list-adjust" id="list-adjust-${i}"><button onclick="move(${i},-1)">← Previous</button><button onclick="move(${i},1)">Next →</button><span class="editrow"><select aria-label="Book" onchange="this.nextElementSibling.max=BOOKS[this.value]">${books.map(b => `<option ${b === current.book ? "selected" : ""}>${esc(b)}</option>`).join("")}</select><input type="number" aria-label="Chapter" min="1" max="${BOOKS[current.book]}" value="${current.chapter}"><button onclick="setReference(${i}, this.parentElement.children[0].value, this.parentElement.children[1].value)">Set</button></span></div>` : "";
+  return `<li class="list-row${isDone(state, i) ? " is-done" : ""}" style="--p:${p}"><span class="list-num">${list.id}</span><span class="list-ref">${isDone(state, i) ? `<s>${ref}</s>` : ref}</span><span class="list-pct" title="${p}% through ${esc(list.name)}">${p}%</span><button class="list-adjust-btn" onclick="toggleAdjust(${i})" aria-expanded="${open}" aria-controls="list-adjust-${i}">${open ? "Close" : "Adjust"}</button><span class="list-meta">${esc(list.name)} · next ${esc(refText(next))}</span>${adjust}</li>`;
+}
+// Repaints only the lists, so opening Adjust doesn't reload the ten chapters below.
+function toggleAdjust(i) {
+  adjusting = adjusting === i ? null : i;
+  const el = document.getElementById("lists");
+  if (el) el.outerHTML = listsHtml();
 }
 function chapterPanel(r) {
   return `<article class="chapter-panel" id="chapter-panel-${r.index}"><header><span>List ${r.list.id}</span><h3>${esc(refText(r.current))}</h3><em>${esc(r.list.name)}</em><button onclick="speakChapter(${r.index})">Play chapter</button></header><div class="chapter-main"><div class="chapter-body" id="chapter-body-${r.index}"><p class="loading">Loading ${esc(refText(r.current))}…</p></div><footer class="chapter-end"><button class="done-btn" onclick="finishChapter(${r.index})">✓ Done with ${esc(refText(r.current))}</button></footer></div></article>`;

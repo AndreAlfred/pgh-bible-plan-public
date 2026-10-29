@@ -12,9 +12,9 @@ Bible format; this file covers the traps, the reasons behind decisions, and how 
   `pghBiblePlan.public.state.v1`. Theme choice is separate: `pghBiblePlan.theme`.
 - `render()` rewrites all of `#app` with `innerHTML` on every change. Consequences:
   - Anything with live state (animations, a dragged slider, an open notice) is reset by
-    a render. The audio scrubber guards against this (`scrubbing`), the card entrance
-    animation only plays on the first render (`firstRender`), and the toast lives
-    **outside** `#app` so `render()` can't delete it.
+    a render. The audio scrubber guards against this (`scrubbing`), the folded lists
+    keep their open state and open Adjust row in JS (`listsOpen`, `adjusting`), and the
+    toast lives **outside** `#app` so `render()` can't delete it.
   - Never read settings back off DOM controls; keep them in `state`.
 
 ## Tests and verification
